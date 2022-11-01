@@ -1,0 +1,277 @@
+---
+title: "CHANGE TITLE"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: TRUE
+    code_folding: show
+    code_download: TRUE
+---
+
+# Preliminaries
+
+```{r setup, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="100")
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+```
+
+## R Packages
+
+```{r load_packages_here, message = FALSE}
+library(janitor)
+library(naniar)
+library(tidyverse)
+```
+
+
+
+# Tasks
+
+
+## Task 1: Data Ingest
+To begin, we read the data from a csv format into a tibble within R, skipping over the row containing data for the entire US and keeping only counties that are actually counties (ranked).
+
+```{r, message=FALSE}
+chr_2022_raw <- read_csv("analytic_data2022.csv", skip = 1) |> filter(county_ranked == 1)
+```
+
+
+## Task 2: State Selection
+Next is the selection of states to investigate - I've selected Arizona, Georgia, Massachusetts, Ohio, and Washington. I've picked these states because I wanted to get a good distribution of areas across the US, so each state location-wise is quite different than the others. Furthermore, I picked states that had similar populations, as all five states ranked between 7 and 15 in terms of population. The total amount of counties was 315, falling within the range needed, with Arizona having 15, Georgia having 159, Massachusetts having 14, Ohio having 88, and Washington having 39 counties respectively.
+
+```{r}
+# select states
+chr_2022 <- chr_2022_raw |>
+  filter(state == "OH" | state == "GA" | state == "MA" | state == "WA" | state == "AZ")
+
+# counties by state
+chr_2022 |> tabyl(state)
+
+# tibble dimensions
+dim(chr_2022)
+```
+
+## Task 3: Variable Selection
+Along with the four required variables (fipscode, county, state, and county_ranked), we had to select five more variables. We selected diabetes prevalence (v060_rawvalue) to be the outcome variable, median income (v063_rawvalue) and adult smoking (v009_rawvalue) to be quantitative variables, excessive drinking (v049_rawvalue) to be the binary variable, and limited access to healthy foods to be the categorical variable (v083_rawvalue). Diabetes prevalence was chosen as obesity has been significantly increasing recently around the world, particularly in the US. Median income was chosen as it has been well documented that people with lower income are at higher risk of having diabetes. Adult smoking was chosen because similar to income, it's been found to increase one's chances of having diabetes. Excessive drinking was selected as it also has been found to increase the risk of diabetes. Lastly, limited access to healthy foods was selected as if one didn't have access to healthy foods, they would be more prone to buying unhealthy ones that would lead to higher chances of obesity and diabetes. Each variable had to be adjusted according (scaling wise) to become an appropriate value, such as a percent. For excessive drinking, the cutoff chosen between a 0 and 1 value was the mean excessive drinking percentage. For limited access to healthy foods, each category was evenly split as to how many counties were in each.
+
+```{r}
+# select variables
+chr_2022 <- chr_2022 |>
+  select(fipscode, county, state, county_ranked, v060_rawvalue, v063_rawvalue, v009_rawvalue, 
+         v049_rawvalue, v083_rawvalue) |>
+  rename(diabetes_prevalence = v060_rawvalue, 
+         median_income = v063_rawvalue,
+         adult_smoking = v009_rawvalue,
+         excessive_drinking = v049_rawvalue,
+         limited_access_healthy_foods = v083_rawvalue) |>
+  mutate(diabetes_prevalence = diabetes_prevalence * 100,
+         median_income = median_income / 1000,
+         adult_smoking = adult_smoking * 100,
+         excessive_drinking = excessive_drinking * 100,
+         limited_access_healthy_foods = limited_access_healthy_foods * 100)
+```
+
+
+## Task 4: Variables to Factors
+For variable 4 (excessive_drinking), we made it a binary variable rather than keep it quantitative. To split values into two distinct categories, the mean value was used as a cutoff, with values of percentages below the mean set to 0, and otherwise set to 1. The 5th variable (limited access to healthy foods) was also made categorical, however this time it's multi-categorical rather than binary. To achieve this and ensure that all the categories would have an appropriate amount of values, we used the cut2 function, which split up values into categories such that each category has the same amount of values. After finding what the intervals were for each category, each one was refactored into numerical values, ranging from 0-5, albeit with some NA values that weren't factored in.
+
+```{r}
+chr_2022 <- chr_2022 |>
+    mutate(fipscode = str_pad(fipscode, 5, pad = "0"),
+           state = factor(state))
+
+# make excessive_drinking a binary variable
+chr_2022 <- chr_2022 |>
+    mutate(excessive_drinking_cat = case_when(
+                   excessive_drinking < mean(excessive_drinking) ~ 0, TRUE ~ 1),
+           excessive_drinking_cat = factor(excessive_drinking_cat))
+
+# make limited access to healthy foods categorical
+chr_2022 <- chr_2022 |>
+    mutate(limited_healthy_cat = factor(Hmisc::cut2(limited_access_healthy_foods, g = 5)))
+
+# see intervals for categories
+unique(chr_2022["limited_healthy_cat"])
+
+# recode factor values
+chr_2022 <- chr_2022 |>
+    mutate(limited_healthy_cat = fct_recode(limited_healthy_cat,
+                                            "lowest" = "[ 0.00, 2.76)",
+                                            "low" = "[ 2.76, 5.51)",
+                                            "middle" = "[ 5.51, 8.39)",
+                                            "high" = "[ 8.39,12.51)",
+                                            "highest" = "[12.51,47.43]"))
+```
+
+### Checking value distributions
+
+```{r}
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+
+# get structure
+str(chr_2022)
+```
+
+
+## Task 5: Saving and Sharing
+We will save the data as an R dataset into the same folder as the project proposal.
+
+```{r}
+chr_2022
+
+# save file as R dataset
+saveRDS(chr_2022, file = "chr_2022_Max_Tjen.Rds")
+```
+
+
+## Task 6: Printing and Summarizing
+Lastly, we have to demonstrate a few things about our data. This includes printing the tibble, showing that each quantitative variable has at least 15 distinct values, and that each state has at least 75% completeness of data.
+
+```{r}
+chr_2022
+
+Hmisc::describe(chr_2022)
+
+# see number of distinct values per column
+chr_2022 |> summarize(across(diabetes_prevalence:limited_healthy_cat, ~n_distinct(.)))
+
+# see number of missing values for each state -> all above 75% completeness
+chr_2022 |> filter(state == "AZ") |> miss_var_summary()
+chr_2022 |> filter(state == "GA") |> miss_var_summary()
+chr_2022 |> filter(state == "OH") |> miss_var_summary()
+chr_2022 |> filter(state == "MA") |> miss_var_summary()
+chr_2022 |> filter(state == "WA") |> miss_var_summary()
+
+# number of values per category -> see task 4, checking value distributions
+
+# statistics on quantitative variables and original versions of binary and categorical 
+mosaic::favstats(~diabetes_prevalence, data = chr_2022)
+mosaic::favstats(~median_income, data = chr_2022)
+mosaic::favstats(~adult_smoking, data = chr_2022)
+mosaic::favstats(~excessive_drinking, data = chr_2022)
+mosaic::favstats(~limited_access_healthy_foods, data = chr_2022)
+
+# show value distributions for categorical variables
+chr_2022 |> tabyl(state)
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+```
+
+
+
+# Codebook
+We also have to create codebooks for each state and variable. For the state codebook, information about each state's name, abbreviation, and number of counties is provided. For the variable codebook, information about each variable's name, description, original variable name, and number of missing values is provided.
+
+```{r}
+# get amount of counties by state
+chr_2022 |> count(state)
+
+# get amount of missing values by column
+chr_2022 |> miss_var_summary()
+
+# get median value cutoff of unemployment percentage 
+summary(chr_2022["excessive_drinking"])
+```
+
+state | abbreviation | # of counties
+------|--------------|--------------
+Arizona | AZ | 15
+Georgia | GA | 159
+Massachusetts | MA | 14
+Ohio | OH | 88
+Washington | WA | 39
+-|-|-
+Total | - | 315
+
+
+Variable | Description | Original Variable | # Missing Values
+---------|-------------|-------------------|-----------------
+fipscode | 5-digit FIPS code | fipscode | 0
+county | name | county | 0
+state | state abbreviation | state | 0
+county_ranked | county ranked (yes = 1, no = 0) | county_ranked | 0
+diabetes_prevalence | [outcome] diabetes prevalence percentage | v060_rawvalue | 0
+median_income | [quantitative] median household income in thousands | v063_rawvalue | 0
+adult_smoking | [quantitative] adult smoking percentage | v009_rawvalue | 0
+excessive_drinking | excessive drinking percentage | v049_rawvalue | 0 | [binary]
+limited_access_healthy_foods | limited access to healthy foods percentage | v083_rawvalue | 5
+excessive_drinking_cat | [categorical] 2 categories: 0 if value < 18.02, 1 if otherwise (see task 4 for how values to split variable was chosen) | v049_rawvalue | 0
+limited_healthy_cat | [categorical] 5 categories: 'lowest' if value <2.76, 'low' if 2.76 <= value < 5.51, 'middle' if 5.51 <= value < 8.39, 'high' if 8.39 <= value < 12.51, 'highest' if 12.51 <= value <= 47.43 (see task 4 for how values to split variable was chosen) | v083_rawvalue | 5
+
+
+
+
+# Proposal Requirements 
+
+
+## Proposal Requirement 1 
+State selection -> See task 2
+
+## Proposal Requirement 2
+Variable selection -> See task 3
+
+## Proposal Requirement 3
+Print tibble
+
+```{r}
+chr_2022
+```
+
+## Proposal Requirement 4
+Run Hmisc::describe() -> See task 7
+
+### Three Important Checks
+1) 75% completeness of data for each state
+2) Raw versions of variables must have at least 10 distinct non-missing values
+3) 10 counties in each category for categorical variables
+
+```{r}
+# check completeness (1)
+chr_2022 |> miss_var_summary()
+
+# ensure no issues
+mosaic::favstats(limited_access_healthy_foods ~ state, data = chr_2022) |>
+  select(state, n, missing) |>
+  mutate(pct_available = 100 * (n - missing) / n) |>
+  kable()
+
+# check distincts (2)
+chr_2022 |> summarize(across(diabetes_prevalence:limited_access_healthy_foods, 
+                             ~n_distinct(.)))
+
+# check amount of counties for each categorical variable (3)
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+```
+
+### Saving the Tibble
+See task 5
+
+## Proposal Requirement 5
+The most challenging part of the project so far for me was to convert the limited access to healthy foods variable into a multi-categorical variable. The process wasn't too hard, more so just the best way to do it. For example, in the beginning, I wanted to use specified values to be cutoffs. However, because of the requirement of having at least 10 counties in each category, this wasn't possible because of the range of data and the distribution. There were a couple of other methods I flirted with, but each of them had some sort of downfall that led to them being tossed out. At the end of the day, I went with a simple even cut, where the cut2 function divided each category evenly so that each one consists of the same amount of counties (+-1). 
+
+
+
+
+
+# Analyses
+
+Not part of proposal - just have section here as future placeholder.
+
+# Session Information
+
+The session information.
+
+```{r}
+sessionInfo()
+```
+
+
