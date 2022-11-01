@@ -1,0 +1,169 @@
+---
+title: "Max Tjen: Lab 04 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(palmerpenguins)
+library(tidyverse)
+library(glue)
+library(kableExtra)
+library(broom)
+
+theme_set(theme_bw())
+```
+
+
+# Question 1
+The news article that I found is about the vaccination status of COVID-19 patients who have been hospitalized due to COVID association.
+
+Author: Saskia V. Popescu
+
+Article Title: “COVID-19 Hospitalizations Broken Down by Vaccination Status”
+
+Publisher: Contagion Live
+
+Publish Date: 2022-10-10
+
+Link: [contagionlive.com/view/covid-19-hospitalizations-broken-down-by-vaccination-status](https://www.contagionlive.com/view/covid-19-hospitalizations-broken-down-by-vaccination-status)
+
+
+# Question 2
+Below is the reference to the complete study, along with a link to the PUBMED reference of the study.
+
+Authors: Fiona P Havers, Huong Pham, Christopher A Taylor, Michael Whitaker, Kadam Patel, Onika Anglin, Anita K Kambhampati, Jennifer Milucky, Elizabeth Zell, Heidi L Moline, Shua J Chai, Pam Daily Kirley, Nisha B Alden, Isaac Armistead, Kimberly Yousey-Hindes, James Meek, Kyle P Openo, Evan J Anderson, Libby Reeg, Alexander Kohrman, Ruth Lynfield, Kathryn Como-Sabetti, Elizabeth M Davis, Cory Cline, Alison Muse, Grant Barney, Sophrena Bushey, Christina B Felsen, Laurie M Billing, Eli Shiltz, Melissa Sutton, Nasreen Abdullah, H Keipp Talbot, William Schaffner, Mary Hill, Andrea George, Aron J Hall, Stephanie R Bialek, Neil C Murthy, Bhavini Patel Murthy, Meredith McMorrow 
+
+Title: “COVID-19-Associated Hospitalizations Among Vaccinated and Unvaccinated Adults 18 Years or Older in 13 US States, January 2021 to April 2022"
+
+Journal Name: JAMA Internal Medicine
+
+Publish Date: 2022-09-10
+
+Link: [jamanetwork.com/journals/jamainternalmedicine/fullarticle/2796235?guestAccessKey=b5fa1eb3-0d40-4ef4-bdce-0bd40db52d45&utm_source=silverchair&utm_campaign=jama_network&utm_content=covid_weekly_highlights&utm_medium=email](https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2796235?guestAccessKey=b5fa1eb3-0d40-4ef4-bdce-0bd40db52d45&utm_source=silverchair&utm_campaign=jama_network&utm_content=covid_weekly_highlights&utm_medium=email)
+
+PUBMED Link: [pubmed.ncbi.nlm.nih.gov/36074486/](https://pubmed.ncbi.nlm.nih.gov/36074486/)
+
+
+# Question 3
+My gut feeling about the study conclusions are that there is a 3:1 chance that study is true. With that, I think that odds(true) = 3, so Pr(true) / (1 - Pr(true)) = 3, so Pr(true) = 0.75. The reason I think this is because I've seen numerous articles and news about there being more COVID related hospitalizations among those who are unvaccinated than those who are vaccinated, so I at least know that that aspect is true. The part that I'm skeptical about is the results, which state that "hospitalizations associated with COVID-19 were 10.5 times higher in unvaccinated persons", as I feel that those numbers are a bit high.
+
+
+# Question 4
+
+## Was the study a clinical study in humans?
+Yes - It was a study on "patients 18 years or older with laboratory-confirmed SARS-CoV-2 infection were identified from more than 250 hospitals". As such, the study was a clinical observational study because it was research that evaluated the effects of COVID vaccinations in humans on health outcomes (COVID related hospitalizations).
+
+## Was the outcome of the study something directly related to human health like longer life or less disease?
+Yes - The outcome was directly related to human health as it was focused on "COVID-19–associated hospitalization rates among vaccinated vs unvaccinated persons". In essence, the study was comparing the frequency of hospitalizations among people who were vaccinated and those who weren't. 
+
+## Was the study a randomized, controlled trial (RCT)?
+No - The study didn't control any patients as the study was observational and based on hospital data. The data was randomized, as the data was taken from COVID-NET, which is "a population-based surveillance system that captures laboratory-confirmed COVID-19–associated hospitalizations in 99 counties in 14 states ... [representing] approximately 10% of the US population". With that, they were able to get data that was random and from numerous states that are very geographically different. These patients weren't controlled though, as it was an observational study on areas where there wasn't an even split among those who are/aren't vaccinated. 
+
+## Was it a large study — at least hundreds of patients?
+Yes - From the 14 states and 99 counties, there were 146,937 patients with a known COVID vaccination status. Among that group, there was "98,243 (69.2%) were unvaccinated; 39,353 (24.5%) were vaccinated with a primary series", so each group had many thousands of patients.
+
+## Did the treatment have a major impact on the outcome?
+Yes - The study used a representative sample of the hospital data to represent the US population demographic makeup along with using "population-based rates". With that sample, they found that "COVID-19-associated hospitalization were approximately 10.5 times higher in unvaccinated adults compared with adults vaccinated with a primary series and a booster dose during January to April 2022". They were able to conclude that "COVID-19 vaccines continue to effectively prevent hospitalizations in all adults ... [and] is an essential tool for preventing morbidity and mortality from COVID-19". This finding demonstrates how much a COVID vaccine can help relative to COVID-19 associated hospitalizations. 
+
+## Did predictions hold up in at least two separate groups of people?
+Yes - The data came from hospitals in 14 states across 99 counties and with that data, the study took a representative sample. This means that the sample was representative of the US population, consisting of certian demographic percentages such as gender and race.
+
+
+# Question 5
+Bayes' rule: (3)(2 * 2 * 1/2 * 2 * 2 * 2) = 48 -> 48
+
+Based on Bayes' rule, the final odds I'd be willing to give the headline is 48:1 that it is true. This means that the odds(true) = 48 and Pr(true) = 0.980. Both of these values are very high which means that in theory, I should believe that the headline and conclusions are true to a very high degree. While I feel like my subjective posterior probability that the headline is true has gone up based on the specification checks, I wouldn't say that the formulaic approach has returned an appropriate conclusion for me in this instance. This is because even though I think that I trust the fact that the headline is true more now, I don't know if it's gone up enough to say that there's 48:1 odds that the headline is true. I think that my original gut feeling score may have been too high, and if it was lower, the yield from the formulaic approach would be more representative of how I feel towards the headline and conclusions now.
+
+
+# Question 6
+Here, we ingest the penguins dataset and then split the data into train and test sets so that we can build a linear model and test it on unseen data.
+
+```{r}
+# get penguin data with complete cases
+complete_penguins = penguins |> filter(complete.cases(penguins))
+# confirm row count
+dim(complete_penguins)
+
+# set seed for reproduction
+set.seed(4312021) 
+
+# take sample of 200
+pen_train <- slice_sample(complete_penguins, n = 200)
+# get the rest of the samples
+pen_test <- anti_join(complete_penguins, pen_train)
+
+dim(pen_train)
+dim(pen_test)
+```
+
+
+# Question 7
+
+```{r, message = FALSE}
+model1 <- lm(body_mass_g ~ bill_length_mm, data = pen_train)
+intercept = round(model1$coefficients["(Intercept)"], 2)
+slope = round(model1$coefficients["bill_length_mm"], 2)
+
+ggplot(pen_train, aes(x = bill_length_mm, y = body_mass_g)) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Penguin Bill Length (mm) and Penguin Mass (g)",
+       x = "Bill Length of Penguin in Millimeters",
+       y = "Body Mass of Penguin in Grams") +
+  geom_label(x = 36.5, y = 6000, size = 3, color = "black", 
+             label = glue("body mass = {intercept} + {slope}(bill length)"))
+
+```
+
+Based on the figure relating a penguin's bill length to their body mass, it appears as though there's a pretty linear relationship between the bill length and body mass. Although the body mass still tends to increase as bill length increases, it looks like as bill length increases, variance in body mass also does. It looks particularly linear along the lower values of bill length until around 50mm, where it's not as linear. This can be seen with the loess smooth curve, as it begins to deviate from a relatively straight path. With points being farther away from the line of best fit as bill length increases, the data may indicate that there is less correlation between bill length and body mass as bill length increases.
+
+
+# Question 8
+
+```{r, message = FALSE}
+pen_test_aug <- augment(model1, newdata = pen_test)
+
+# get root mean squared prediction error
+root <- round(mosaic::favstats(~ (.resid^2), data = pen_test_aug) |> 
+                mutate("RMSPE" = sqrt(mean)) |>
+                select(RMSPE), 2)
+
+# get mean and maximum absolute prediction error
+meanAndMax <- round(mosaic::favstats(~ abs(.resid), data = pen_test_aug) |>
+                      select(mean, max), 2)
+
+print(root)
+print(meanAndMax$mean)
+print(meanAndMax$max)
+```
+
+ Root Mean Squared   Mean Absolute   Max Absolute
+------------------- --------------- --------------
+      631.63            516.70         1760.91
+
+The units of measurement for the root mean squared prediction error is the same as the units of the outcome variable, so in this case since the outcome variable is body mass in grams, the unit is grams.
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
