@@ -1,5 +1,5 @@
 # 431
 
-Case Western Reserve University - Structured and Unstructured Data
+Case Western Reserve University - Statistical Methods I
 
-CWRU PQHS431 -> Fall 2022 Statistical Methods I
+CWRU PQHS431 -> Fall 2022
