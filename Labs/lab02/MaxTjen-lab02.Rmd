@@ -1,0 +1,123 @@
+---
+title: "Max Tjen: Lab 02 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(tidyverse)
+
+theme_set(theme_bw()) 
+```
+
+## Import the `lab02_counties.csv` data
+
+```{r}
+lab02_data <- read_csv("lab02_counties.csv")
+```
+
+
+# Question 1
+
+This code creates a tibble of county data for the midwest states Ohio, Indiana, Illinois, Michigan, and Wisconsin, through using the filter function and selecting the specific states.
+
+```{r q1_create_nynj}
+midwest_data <- lab02_data |>
+  filter(state == "OH" | state == "IN"| state == "IL" | state == "MI" | state == "WI")
+```
+
+
+# Question 2
+
+This code summarizes the number of rows for each state individually in the midwest_data tibble. It utilizes the count function, which finds a unique state and then finds how many rows there are whose state matches the unique one 
+
+```{r}
+midwest_data |> count(state)
+```
+
+
+# Question 3
+
+This code shows the percentage of county residents who have completed some college and whether or not the county is in a metropolitan area for Cuyahoga County in Ohio. It can be observed that the county is in a metropolitan area (Cleveland) and that ~69.38% of residents within the county have completeed some sort of college.
+
+```{r}
+midwest_data |>
+    filter(state == "OH") |>
+    filter(county_name == "Cuyahoga County") |>
+    select(state, county_name, some_college, metro)
+```
+
+
+# Question 4
+
+This code creates a subset of data that only has the percentage's of county residents who have completed some college. With that data, a histogram is created that plots the percentage value bin against the count of values. For example, if the percentage bin was between 10 and 20 and the number of values within the bin is 50, then the column along the x-axis would be between 10 and 20 and the y-axis would go from 0 to 50. 
+
+```{r}
+some_college_data <- midwest_data |> select(some_college)
+
+ggplot(data = some_college_data, aes(x = some_college)) +
+  geom_histogram(col = "white", fill = "blue", bins = 20) +
+  theme_bw() +
+  labs(title = "Percentage of Midwest County Residents (IL, IN, MI, OH, WI)\nthat have Completed Some College",
+       x = "Percentage of Residents",
+       y = "Number of Counties") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+# Question 5
+
+Based on the histogram and Cuyahoga County's percentage value (69.38), it appears that the county is above average in terms of their resident percentage who have completed some college versus the full distribution of counties. The median percentage among all the counties looks to be between 55-60%, so 69.38% is significantly higher. As such, this means that Cuyahoga County has a higher percentage of residents who have completed some college than most counties in midwest states. 
+
+
+# Question 6
+
+This code creates a split plot that that shows histograms of counties' some_college value on the same value scale on the x-axis. The possible metro values (0 or 1) are used to split up the data into separate histograms. The first uses data from counties that aren't in metropolitan areas (value = 0), while the second uses data from counties that are in metropolitan areas (value = 1).
+
+```{r}
+ggplot(data = midwest_data, aes(x = some_college, fill = factor(metro))) +
+  geom_histogram(bins = 20, col = "white") +
+  facet_grid(metro ~ ., labeller = "label_both") +
+  guides(fill = "none") + 
+  labs(title = "Percentage of Midwest County Residents (IL, IN, MI, OH, WI) that have 
+       Completed Some College by County Metro Status",
+       x = "Percentage of Residents",
+       y = "Number of Counties")
+```
+
+
+# Question 7
+
+For all counties in the metro category, it looks like the median percentage of metro county residents that have done some college has increased relative to all counties to around 65%. This means that Cuyahoga County's percentage value of about 69.38% is still above the median, albeit not as much as before, so Cuyahoga County has a higher percentage of residents who have completed some college than most metropolitan area counties in midwest states.
+
+
+# Question 8
+
+Inductive inference is the process of trying to take individual occurrences (the data per se) and drawing conclusions from it. The process follows the steps of taking data, creating a sample, using that sample to generalize the study population, and then applying it to the target population. The conclusions drawn from the data may be influenced by inductive inference based on it's validity, as the reliability check has already passed. In this assignment, there are a couple of influences that could impact conclusions. The most obvious one would be the selected states to study, as the scope of generally valid conclusions are now limited to midwest states because all of the selected states are next to each other and in the midwest region. Another thing that could impact conclusions are how the counties' metro status is quantified, as it may be determined based on opinion or an equation.
+
+
+# Session Information
+
+Adding a `sessionInfo()` chunk at the end of your document helps with reproducibility.  Take a look to see what it produces, and include the command at the end of this Lab, please.
+
+```{r}
+sessionInfo()
+```
+
