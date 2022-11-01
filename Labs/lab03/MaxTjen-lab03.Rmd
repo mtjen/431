@@ -1,0 +1,182 @@
+---
+title: "Max Tjen: Lab 03 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(palmerpenguins)
+library(tidyverse)
+library(patchwork)
+
+theme_set(theme_bw())  ## or use theme_set(theme_light())
+```
+
+## Read penguin data for questions 1-5
+```{r, message = FALSE, warning = FALSE}
+lab03_chr <- read_csv("lab03_counties.csv")
+dim(lab03_chr)
+```
+
+## Read county data for Questions 6-9
+Read the county data that we will use for questions 6-10 and ensure that there are 3142 rows and 12 columns
+
+```{r, message = FALSE, warning = FALSE}
+lab03_chr <- read_csv("lab03_counties.csv")
+dim(lab03_chr)
+```
+
+
+# Question 1
+Here we create a visualization to help show the center, shape, and spread of the penguins' body mass distribution. 
+
+```{r}
+p1 <-ggplot(penguins, aes(x = body_mass_g)) +
+  geom_histogram(bins = 20, fill = "black", col = "white") + 
+  labs(title = "Body Mass of Penguins Measured in Grams",
+       x = "Body Mass of Penguin",
+       y = "Number of Penguins")
+
+p2 <- ggplot(penguins, aes(x = body_mass_g, y = "")) +
+  geom_boxplot(outlier.color = "purple") + 
+  labs(title = "Body Mass of Penguins Measured in Grams", 
+       x = "Body Mass of Penguin")
+
+p1 / p2
+```
+
+
+# Question 2
+The penguins' body mass distribution had a mean of 4,201.75 grams, median of 4,050 grams, standard deviation of 801.95 grams, and interquartile range (IQR) of 1,200 grams. The IQR was calculated by subtracting the Q1 value (3550) from the Q3 value (4750).
+
+```{r}
+mosaic::favstats(~ body_mass_g, data = penguins)
+```
+
+
+# Question 3
+It appears that the distribution of the penguins' body masses doesn't follow a Normal distribution as it is skewed right (long right tail). The center of the penguins' body mass distribution is slightly shifted left and has a mean of 4,201.75 grams and a median of 4,050 grams. The distribution shape was skewed right as seen in the histogram, and the spread had a standard deviation of 801.95 grams, interquartile range of 1,200 grams, and no outlier values. Because the distribution is skewed and not normal, it's best to use the median value as the center measure. This is because it isn't affected as much as the mean is by outlier values.
+
+
+# Question 4
+Since the penguins dataset also contains information on the penguins' species, we will create a visualization and numeric summary to show how the various species' body mass compare. The three penguin species included in this dataset are Adelie, Chinstrap, and Gentoo.
+
+```{r}
+ggplot(penguins, aes(x = species, y = body_mass_g)) +
+  geom_violin(aes(fill = species)) + 
+  geom_boxplot(width = 0.25) + 
+  coord_flip() + 
+  labs(title = "Body Mass of Penguins Measured in Grams by Species",
+       x = "Species of Penguin",
+       y = "Body Mass Distribution of Penguins")
+
+mosaic::favstats(body_mass_g ~ species, data = penguins)
+```
+
+
+# Question 5
+We can conclude that the Gentoo penguin species are much heavier than the Adelie and Chinstrap species and also have a larger range of weights. The Adelie and Chinstrap species distributions are pretty similar, with near identical median and range values. Both of them also have relatively normal distributions, although the Adelie species' distribution was more evenly distributed and not as heavily concentrated around the median value as the Chinstrap species.
+
+
+# Question 6
+This code creates a dataset that is a subset of size 750 from the county data and holds four variables. It also uses the filter function to show that Cuyahoga County in Ohio is in the data, along with using the favstats function to check that the mean value of the adult_obesity value is in fact 0.3345. 
+
+```{r}
+# set seed for reproduction
+set.seed(20212022) 
+
+# take sample of 750
+chr_sample <- slice_sample(lab03_chr, n = 750) |> 
+  select(state, county_name, adult_obesity, food_insecurity)
+
+# show Cuyahoga County exists in data
+chr_sample |> filter(state == "OH") |> filter(county_name == "Cuyahoga County")
+
+# check adult obesity mean value
+mosaic::favstats(~ adult_obesity, data = chr_sample)
+```
+
+
+# Question 7
+Here, we create a visualization of the adult obesity variable in the data as an outcome. The distribution has a mean of 0.335, median of 0.339, standard deviation of 0.061, and an IQR of 0.077. The shape of the distribution is quite normal with the exception of some outliers. Overall though, a normal model seems appropriate based on the histogram and QQ plot. With the QQ plot, nearly all of the points (besides around the tail) are very close to the QQ line, which means that the distribution is normal. One thing to look at though would be the tails, which show a slight S shape which means that there may be lots of outliers in the data.
+
+```{r}
+# QQ plot
+p1 <- ggplot(chr_sample, aes(sample = adult_obesity)) +
+  geom_qq(col = "blue") +
+  geom_qq_line(col = "red") +
+  theme(aspect.ratio = 1) + 
+  labs(title = "Normal Q-Q plot of Adult Obesity Proportion")
+
+# histogram
+p2 <- ggplot(chr_sample, aes(x = adult_obesity)) +
+  geom_histogram(bins = 20, fill = "red", col = "black") +
+  labs(title = "Histogram of Adult Obesity Proportion by County",
+       x = "Adult Obesity Proportion",
+       y = "Number of Counties")
+
+# boxplot
+p3 <- ggplot(chr_sample, aes(x = adult_obesity, y = "")) +
+  geom_boxplot(outlier.color = "purple") + 
+  labs(title = "Boxplot of Adult Obesity Proportion", 
+       x = "Adult Obesity Proportion")
+
+p1 + (p2 / p3 + plot_layout(heights = c(4,1)))
+
+mosaic::favstats(~ adult_obesity, data = chr_sample)
+```
+
+
+# Question 8
+The following scatter plot visualizes the relationship between food insecurity proportion and adult obesity proportion. It appears that as food insecurity increases, the adult obesity does as well, which means that there is a positive correlation between the two variables. Although for the most part the data points are close to the trend line, there are still a decent amount of outliers, particularly on the lower and upper ends of food insecurity values. From the scatter plot, a linear model seems appropriate for the variables as the regression relationship is linear and the variance between the fitted points versus the actual points look relatively similar across various food insecurity proportion values.
+
+```{r}
+ggplot(chr_sample, aes(x = food_insecurity, y = adult_obesity)) +
+  geom_point(col = "dodger blue") + 
+  geom_smooth(method = "lm", col = "black", se = FALSE) + 
+  labs(title = "Relationship Between Food Insecurity and Adult Obesity",
+       x = "Food Insecurity Proportion",
+       y = "Adult Obesity Proportion")
+```
+
+
+# Question 9
+Cuyahoga County's food insecurity and adult obesity proportion values [colored in red in scatter plot] look to be quite average relative to the other counties in the sample. The food insecurity proportion appears to be in the middle of the x-axis values and the adult obesity proportion appears to be slightly below the middle of the y-axis values. This is supported by Cuyahoga County being below the line of best fit, indicating that the actual value of the county's adult obesity proportion is below the predicted value. This means that relative to the other counties in the sample, Cuyahoga County's adult obesity proportion is below what it's expected to be based on their food insecurity proportion. 
+
+```{r}
+cuyahoga <- chr_sample |> filter(state == "OH") |> filter(county_name == "Cuyahoga County")
+
+ggplot(chr_sample, aes(x = food_insecurity, y = adult_obesity)) +
+  geom_point(col = "dodger blue") + 
+  geom_point(aes(x = 0.159, y = 0.318, col = "red")) +  # add dot using Cuyahoga County values
+  geom_smooth(method = "lm", col = "black", se = FALSE) + 
+  labs(title = "Relationship Between Food Insecurity and Adult Obesity",
+       x = "Food Insecurity Proportion",
+       y = "Adult Obesity Proportion")
+```
+
+# Question 10
+As stated before, there is a positive correlation relationship between the food insecurity and adult obesity variables. However, we can't conclude with certainty that lack of access to adequate food causes obesity, as there are many other variables that may be lurking or cofounding. Because of that, other variables must be investigated as to their relationship with each of the variables in question (insecurity and obesity). By taking a random observation sample, conclusions can be strengthened as some bias is reduced, although the dataset still only holds counties in the USA rather than the whole world. The claim may be further strengthened by taking another sample and seeing if the same conclusions can be found.
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
