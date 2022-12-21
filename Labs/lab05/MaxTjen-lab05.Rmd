@@ -1,0 +1,194 @@
+---
+title: "Max Tjen: Lab 05 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(tidyverse)
+library(naniar)
+library(dplyr)
+library(broom)
+library(kableExtra)
+library(janitor)
+library(Epi)
+
+theme_set(theme_bw())
+```
+
+```{r}
+data <- read.csv("/Users/mtjen/desktop/431/labs/lab05/lab05_counties.csv")
+
+# filter and select data
+midwest05 <- data |>
+  select(state, county_name, metro, access_to_exercise_opportunities) |>
+  filter(state == "OH" | state == "IN" | state == "IL" | state == "MI"| state == "WI")
+
+head(midwest05)
+```
+
+```{r}
+# see if there are any null values
+miss_var_summary(midwest05)
+```
+
+# Question 1
+
+```{r}
+# create new variables 
+midwest05 <- midwest05 |>
+  mutate(metro_cat = case_when(
+    metro == 0 ~ "Non-Metropolitan", TRUE ~ "Metropolitan"), 
+    metro_cat = factor(metro_cat)) |>
+  mutate(exercise_access = access_to_exercise_opportunities * 100)
+
+head(midwest05)
+```
+
+```{r, message = FALSE}
+ggplot(midwest05, aes(x = exercise_access)) +
+  geom_histogram(aes(fill = metro_cat)) + 
+  facet_grid(metro_cat ~ ., labeller = "label_both") +
+  labs(title = "Distribution of Percentage of Adults with Adequate Access to Exercise Opportunities by Metropolitan Status",
+       x = "Percentage of Adults with Adequate Exercise Access Opportunities",
+       y = "Number of Counties")
+```
+
+Based on the visualization, it looks like adults living in metropolitan counties have higher rates of access to exercise opportunities than those in non-metropolitan counties. This can be seen by the center of each distribution, as the center of metropolitan counties looks to be around 85% while the center of non-metropolitan counties looks around 65%. Both distributions appear to be approximately normal with a left skew, although metropolitan counties has a larger skew than non-metropolitan ones.This may be due to non-metropolitan counties having more outlier values that are extreme than metropolitan counties.
+
+# Question 2
+
+The sampling approach used to create the data used in Question 1 was not a random sample from the population of interest. This is because the population of interest is for metropolitan/non-metropolitan counties across the US but the counties/states in the data are only from midwest states. There can be a bit of a reasonable argument for generalizing it as the states selected have some large cities and a good balance of metropolitan and non-metropolitan counties. Overall though, there is insufficient information because the counties are only from a subset of midwest states that are geographically neighboring and not representative enough of the United States.
+
+# Question 3
+
+The question 1 data uses independent samples. This is because samples of groupings (metropolitan, non-metropolitan) don't contain the same counties and we are comparing scores on only one variable (access to exercise). For paired samples, the same counties would be used to compare 2+ variables.
+
+# Question 4
+
+```{r}
+ggplot(midwest05, aes(x = metro_cat, y = exercise_access)) +
+  geom_violin(aes(fill = metro_cat)) + 
+  geom_boxplot(width = 0.25) + 
+  coord_flip() + 
+  labs(title = "Percentage of Adults with Adequate Access to \nExercise Opportunities by Metropolitan Status",
+       x = "Metropolitan Status",
+       y = "Percentage with Adequate Access")
+```
+
+With the independent samples, when looking at the distributions of a county's metropolitan status, it looks like we will use a t-test for our procedure. This is because for each the distributions, we can assume normality of each based on the histograms along with the violin plots. Both of the distributions look very normal with a little skew because of outliers. There aren't many outliers though (4 for non-metropolitan, 1 for metropolitan), so overall, the each of the distributions are essentially normal.
+
+# Question 5
+
+```{r}
+t_test <- t.test(exercise_access ~ metro_cat, data = midwest05, var.equal = TRUE, 
+             conf.level = 0.95)
+welch_test <- t.test(exercise_access ~ metro_cat, data = midwest05, conf.level = 0.95)
+
+bind_rows(tidy(t_test), tidy(welch_test)) |>
+  select(method, estimate, conf.low, conf.high, p.value) |> 
+  kbl(digits = 3) |> kable_classic_2(font_size = 24, full_width = F)
+```
+
+We selected a Pooled t-test to use rather than a Welch's t-test as we can assume equal variance between the distributions as seen by the box and whisker plots before. Utilizing a Pooled t-test, we can see that our 95% confidence interval is (8.500, 14.845). The distributions' range and IQR's are very similar when disregarding the few outliers for non-metropolitan counties. Because of this, we can use a Pooled t-test as it assumes equal variance while Welch's t-test doesn't assume equal variance.
+
+# Question 6
+
+Based on our confidence interval, we can conclude from our data that there is a difference in the mean percentage of adults with adequate access to exercise opportunities between metropolitan and non-metropolitan counties. This is from our Pooled t-test results, where we got a 95% confidence interval of (8.500, 14.845). This means that if the test was run 100 times, the parameter (mean differences) would fall within the range 95 times. With this interval, we can determine that there is a difference in mean percentages of the metropolitan and non-metropolitan distributions because it doesn't include 0, which would mean that the means are equal. This particular interval has large values, signifying that there is quite a gap in the mean percentage of adults with adequate access to exercise opportunities between metropolitan and non-metropolitan counties.
+
+# Question 7
+
+```{r}
+data <- read_rds("/Users/mtjen/desktop/431/labs/lab05/lab05_lind.Rds")
+
+# make appropriate variables factors
+data <- data |>
+    mutate(abcix = as_factor(abcix),
+           stent = as_factor(stent),
+           female = as_factor(female),
+           diabetic = as_factor(diabetic),
+           acutemi = as_factor(acutemi),
+           ves1proc = as_factor(ves1proc),
+           sixMonthSurvive = as_factor(sixMonthSurvive))
+  
+# change labels as needed for factor variables
+data <- data |>
+  mutate(abcix = case_when(abcix == 0 ~ "Usual Care", TRUE ~ "Receiving abciximab"), 
+         abcix = factor(abcix),
+         stent = case_when(stent == 0 ~ "Coronary stent not deployed", 
+                           TRUE ~ "Coronary stent deployed"), 
+         stent = factor(stent),
+         female = case_when(female == 0 ~ "Male", TRUE ~ "Female"), 
+         female = factor(female),
+         diabetic = case_when(diabetic == 0 ~ "Not Diabetic", TRUE ~ "Diabetic"), 
+         diabetic = factor(diabetic),
+         acutemi = case_when(acutemi == 0 ~ "No Acute MI", 
+                             TRUE ~ "Acute MI"), 
+         acutemi = factor(acutemi),
+         sixMonthSurvive = case_when(sixMonthSurvive == FALSE ~ "No survival at six months", 
+                                     TRUE ~ "Survival at six months"), 
+         sixMonthSurvive = factor(sixMonthSurvive))
+
+# contingency table
+data |> tabyl(abcix, acutemi)
+
+# relative risk
+twoby2(table(data$abcix, data$acutemi), conf.level = 0.9)
+```
+
+The relative risk 90% confidence interval values are (1.990, 4.417). This means that if the experiment was conducted 100 times, in 90 of them, the risk of acute myocardial infarction within the previous 7 days for patients receiving abciximab is between 1.990 and 4.417 times more than for patients receiving usual care alone.
+
+# Question 8
+
+```{r}
+data |> tabyl(diabetic, acutemi)
+
+twoby2(table(data$diabetic, data$acutemi), conf.level = 0.9)
+```
+
+To compare the difference in probability of acute MI for those with and without diabetes, we get a 90% confidence interval of (-0.0569, 0.0286). This means that if the experiment was conducted 100 times, in 90 of them, the difference in probability of a patient with acute MI having diabetes versus not having diabetes is between -0.0569 and 0.0286.
+
+# Question 9
+```{r}
+table <- data.frame(matrix(ncol = 3, nrow = 3))
+colnames(table) <- c('Predicted Not to Survive', 'Predicted to Survive', 'Total')
+rownames(table) <- c('Did Not Survive', 'Did Survive', 'Total')
+
+table['Did Not Survive', ] <- c(9, 7, 16)
+table['Did Survive', ] <- c(74, 405, 479)
+table['Total', ] <- c(83, 412, 495)
+
+table
+```
+
+## Accuracy
+(9 + 405) / 495 -> 414 / 495 -> 83.64%
+
+## Sensitivity
+405 / 479 -> 84.55%
+
+## Specificity
+9 / 16 -> 56.25%
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
