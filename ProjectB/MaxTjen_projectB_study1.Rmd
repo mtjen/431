@@ -1,0 +1,571 @@
+---
+title: "Analyzing LDL Cholesterol and HBP Medication"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+linkcolor: blue
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+
+# Setup and Data Ingest
+
+## Initial Setup and Package Loads 
+
+In this section, we load the packages that we will use for study 1.
+
+```{r, cache=FALSE, message = FALSE, warning = FALSE}
+library(knitr); library(rmdformats)
+
+library(janitor); library(naniar)
+library(broom); library(patchwork)
+
+library(nhanesA)
+
+library(car)
+library(readxl)
+library(Epi)
+library(Hmisc)
+library(tidyverse) 
+
+## Global options
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+
+theme_set(theme_bw())
+```
+
+## Loading the Raw Data into R 
+
+Here, we import our data to keep the necessary variables needed as well as merge the separate datasets together to create one dataset that we will use for the study.
+
+```{r data_load, message = FALSE}
+# raw data
+ldl <- nhanes('P_TRIGLY') |> tibble() |> clean_names()
+demo <- nhanes('P_DEMO') |> tibble() |> clean_names()
+blood <- nhanes('P_BPQ') |> tibble() |> clean_names()
+
+# get needed data and filter out those 
+ldl <- ldl |> select(seqn, lbdldl)
+demo <- demo |> select(seqn, riagendr, ridreth3, ridstatr, ridageyr)
+blood <- blood |> select(seqn, bpq050a)
+
+# join data
+new <- inner_join(ldl, demo, by = "seqn")
+study1 <- inner_join(new, blood, by = "seqn")
+
+# see if all seqn values are unique
+dim(study1)
+length(unique(study1$seqn))
+```
+
+
+
+# Cleaning the Data
+
+We now want to begin filtering our data. We will filter `ridstatr` and `ridageyr` to only keep adult subjects that were both interviewed and MEC examined. Next we keep only those observations with complete cases as we can assume that the observations are missing values completely at random. Lastly, we change values for `riagendr` and `bpq050a` as well as make `ridreth3` a factor.
+
+```{r}
+# filter out those with missing values
+study1 <- study1 |> filter(complete.cases(study1))
+
+# filter adults and only keep ridstatr values of 2
+study1 <- study1 |>
+  filter(ridstatr == 2) |>
+  filter(ridageyr >= 21) |> 
+  filter(ridageyr < 80)
+
+# check that all ridstatr values are 2
+unique(study1$ridstatr)
+
+# filter complete cases
+study1 <- study1 |> filter(complete.cases(study1))
+
+# make variables factors
+study1 <- study1 |> 
+  mutate(riagendr = replace(riagendr, riagendr == 2, 0)) |>
+  mutate(riagendr = factor(riagendr))
+
+study1 <- study1 |> 
+  mutate(bpq050a = replace(bpq050a, bpq050a == 2, 0)) |>
+  mutate(bpq050a = factor(bpq050a))
+  
+study1 <- study1 |> mutate(ridreth3 = factor(ridreth3))
+
+study1 <- study1 |>
+  select(seqn, lbdldl, riagendr, ridreth3, bpq050a)
+
+study1
+```
+
+We can now see our resulting dataset that we will use for study 1.
+
+## Quantitative Variable Check
+
+Now we will check our outcome variable `lbdldl` and get a numeric summary.
+
+```{r, message = FALSE}
+mosaic::favstats(study1$lbdldl)
+```
+
+From this summary, we can see that the median value is close to the median, so the value distribution is likely pretty symmetric.
+
+## Binary Variables Check
+
+We will also check numerical summaries for our binary variables, `riagendr` and `bpq050a`, to see their value distributions.
+
+```{r}
+study1 |> select(riagendr,bpq050a) |> summary()
+```
+
+For `riagendr`, we can see that the value distribution is quite balanced while for `bpq050a`, the distribution is very imbalanced.
+
+## Multicategorical Variables Check
+
+Lastly, we will check our multicategorical variable `ridreth3` to see its value distributions.
+
+```{r}
+study1 |> select(ridreth3) |> summary()
+```
+
+We can see that not all of the groups are evenly distributed, with the number of observations for each group ranging from 62-435.
+
+## List of Missing Values
+
+We can now count the number of missing observations in each variable, which should be 0 for all of them since we filtered out complete cases earlier.
+
+```{r}
+miss_var_summary(study1)
+```
+
+As expected, we have no missing values in our dataset.
+
+# Codebook and Data Description
+
+## Codebook
+
+The NHANES dataset combines interviews and physical examinations from adults and children in the United States using surveys examining a nationally representative sample of about 5,000 persons each year. In my work, we used data from the 2017 - March 2020 survey period, and from the following data sets: Demographics (P-DEMO), LDL Cholesterol (P-TRIGLY), and Blood Pressure and Cholesterol (P-BPQ). We also restricted the data to adults between 21-79 as we don't want to include children or the elderly.
+
+The 5 variables in our tidy data set `study1` are `seqn`, `lbdldl`, `riagendr`, `ridreth3`, `bpq050a`. The 'Type' column indicates the number of levels in each categorical (factor) variable. For the Type information, 'Quantitative' represents a quantitative variable and 'Categorical (x)' indicates a categorical variable with x levels.
+
+ Variable | Type | Description / Levels
+--------- | ---- | ---------------------
+`seqn` | ID | Subject code identifier of patient
+`lbdldl` | Quantitative | Patient's LDL-cholesterol (mg/dL)
+`riagendr` | Categorical (2) | Gender of patient: 0 if female, 1 if male
+`ridreth3` | Categorical (6) | The race/Hispanic origin of a patient with NH Asian: 1 if Mexican American, 2 if Other Hispanic, 3 if Non-Hispanic White, 4 if Non-Hispanic Black, 6 if Non-Hispanic Asian, 7 if Other Race - Including Multi-Racial
+`bpq050a` | Categorical (2) | If patient is taking prescribed medicine for high blood pressure: 0 if no, 1 if yes
+
+## Analytic Tibble
+
+We will now prove that `study1` is a tibble by printing it.
+
+```{r}
+is_tibble(study1)
+
+study1
+```
+
+## Data Summary
+
+We will now use describe() to get some information about each variable in our dataset.
+
+```{r}
+describe(study1)
+```
+
+With this, we can see the value distributions for each, as well as the lowest and highest values of quantitative variables and level frequency and proportions for categorical variables.
+
+# Analysis B: Compare 2 Population Means using Independent Samples
+
+## The Question
+
+In this analysis, we will compare `lbdldl` by `riagendr` using independent samples. We're comparing the mean `lbdldl` of the population represented by respondents who are male to the mean `lbdldl` of the population represented by the respondents who are female. There is nothing to suggest that the two samples of male `lbdldl` and female `lbdldl` values are paired or matched in any way. With this, we're going to investigate the two samples independently to help us understand issues related to hypothesis testing assumptions.
+
+Our research question is:
+
+Is there a meaningful difference between male and female patients in their 'bad' LDL cholesterol values?
+
+## Describing the Data
+
+We will begin by making our gender variable (`riagendr`) more descriptive and examining a breakdown of `lbdldl` values by patients' gender.
+
+```{r, message = FALSE}
+b_data <- study1 |> 
+  mutate(riagendr_b = fct_recode(factor(riagendr),
+                                 "Male" = "1",
+                                 "Female" = "0"))
+
+mosaic::favstats(lbdldl ~ riagendr_b, data = b_data) |>
+  kable(digits = 2)
+```
+
+From this preliminary summary breakdown, we can see that female patients appear to have a higher mean and median `lbdldl` than male patients. Similarly, all of females' quartile values are higher as well as their standard deviation. 
+
+We also want to confirm that there are at least 15 unique values for our outcome variable and that each gender subgroup has at least 30 patients using tabyl().
+
+```{r}
+length(unique(b_data$lbdldl))
+
+b_data |> tabyl(riagendr_b)
+```
+
+From this, we can see that both 'Female' and 'Male' have at least 30 values.
+
+### Graphical Summaries
+
+We will create a data visualizations to see how our outcome variable `lbdldl` is distributed between males and females.
+
+```{r, message = FALSE}
+ggplot(b_data, aes(x = riagendr_b, y = lbdldl)) + 
+  geom_violin(aes(fill = riagendr_b)) +
+  geom_boxplot(width = 0.3, notch = TRUE) +
+  guides(fill = "none") +
+  coord_flip() +
+  labs(title = "LDL Cholesterol by Gender",
+       x = "Gender", y = "LDL Cholesterol") + 
+  coord_flip() + 
+  theme_bw()
+```
+
+We can see that both of these groups, the cholesterol distribution is somewhat skewed right, particularly for female patients who also has a handful of outliers. Next, we will look at the normality of `lbdldl` for each gender.
+
+```{r}
+ggplot(b_data, aes(sample = lbdldl, col = riagendr_b)) +
+  geom_qq() + 
+  geom_qq_line() +
+  facet_wrap(~ riagendr_b, labeller = "label_both") +
+  guides(col = "none") +
+  theme_bw() +
+  labs(y = "LDL Cholesterol",
+       title = "Normal QQ Plot of LDL Cholesterol by Gender")
+```
+
+These QQ plots for each gender confirms that both groups have a right skew, with female patients having a clear skew and male patients being slightly skewed.
+
+### Outcome Normalization
+
+With the right skew we saw of `lbdldl`, we will use a Box-Cox model to see if there's a transformation for `lbdldl` that may effectively normalize the values.
+
+```{r}
+boxCoxMod <- lm(lbdldl ~ riagendr_b, data = b_data)
+boxCox(boxCoxMod)
+```
+
+From the model, it appears that a square root transformation of LDL cholesterol values may normalize the distribution. To check, we will replot the QQ plot split by gender.
+
+```{r}
+ggplot(b_data, aes(sample = sqrt(lbdldl), col = riagendr_b)) +
+  geom_qq() + 
+  geom_qq_line() +
+  facet_wrap(~ riagendr_b, labeller = "label_both") +
+  guides(col = "none") +
+  theme_bw() +
+  labs(y = "sqrt(LDL Cholesterol)",
+       title = "Normal QQ Plot of LDL Cholesterol by Gender")
+```
+
+As we can see from the new QQ plots, the square root transformation has effectively normalized `lbdldl` values for each gender.
+
+## Main Analysis
+
+Before we begin our analysis, we will check the raw mean and variance values of `lbdldl` for each gender.
+
+```{r}
+b_data |> group_by(riagendr_b) |>
+  summarise(n = n(), mean = mean(lbdldl), variance = var(lbdldl))
+```
+
+This summary shows us that the mean `lbdldl` for females is greater than males and the variance of females is much higher than of males.
+
+### Welch's t-test
+
+With our transformation of the outcome variable, we can assume normality of `lbdldl` values. From our numerical summaries between male and female patients, we can also see that their variance are not very similar. Because of this, we will use a Welch's t-test to compare the means of `lbdldl` values between gender, as we can also assume that the samples in each group are randomly and independently drawn and that the samples in each group represent a sample of the population of interest.
+
+```{r}
+t.test(sqrt(lbdldl) ~ riagendr_b, data = b_data, conf.level = 0.90)
+```
+
+- From our Welch's t-test, we can see that the point estimates for the population of square root `lbdldl` means are 10.35 for women and 9.86 for men. This means that that a female patient is estimated to have an `lbdldl` of $10.35^2$, or 107.12, and a male patient is estimated to have an `lbdldl` of $9.86^2$, or 97.22. This means that a female patient is estimated to have a higher LDL cholesterol value than a male patient by 9.90 mg/dL.
+- The two sided 90% confidence interval for the difference in population means between the `lbdldl` values of females - males is (0.32, 0.65), which when converted back to raw numbers is (0.10, 0.42).
+- With this confidence interval, we can see that 0 is not included within, which allows us to conclude that the difference in true means between male and female patients is slightly positive.
+
+## Conclusions
+
+From our Welch's t-test, we found a 90% confidence interval describing the difference in population means of the square root `lbdldl` values for male and female patients. From this interval of (0.32, 0.65), we can see that 0 is not included which indicates with 90% confidence that the difference in mean values of male and female `lbdldl` is not 0. If it was 0, it would mean that the means of both groups are the same, so by 0 not being included, we can find with 90% confidence that female patients have higher LDL cholesterol values than men based on our sample of patients. The p-value is also below our 90% confidence threshold of 0.10, so our result is statistically significant.
+
+
+# Analysis C: Comparing 6 Population Means
+
+## The Question
+
+For this analysis, we are comparing `lbdldl` by `ridreth3`, which indicates the race/Hispanic origin of patient. To do so, we will use analysis of variance (ANOVA) and related tools to compare the mean `lbdldl` values of the population based on different race origins. There are 6 values in `ridreth3`: 1 if Mexican American, 2 if Other Hispanic, 3 if Non-Hispanic White, 4 if Non-Hispanic Black, 6 if Non-Hispanic Asian, 7 if Other Race - Including Multi-Racial. There isn't any crossover/relationship between the groups, so the samples are independent.
+
+Our research question is:
+
+Are there statistically meaningful differences in `lbdldl` values between patients with various race origins and if so, is it consistent with previous scientific studies?
+
+## Describing the Data
+
+We will begin by giving `ridreth3` more descriptive values and seeing a numerical summary of `lbdldl` values broken down by each race group.
+
+```{r, message = FALSE}
+c_data <- study1 |> 
+  mutate(ridreth3_c = fct_recode(factor(ridreth3),
+                                 "Mexican American" = "1",
+                                 "Other Hispanic" = "2",
+                                 "Non-Hispanic White" = "3",
+                                 "Non-Hispanic Black" = "4",
+                                 "Non-Hispanic Asian" = "6",
+                                 "Other Race" = "7"))
+
+mosaic::favstats(lbdldl ~ ridreth3_c, data = c_data)
+```
+
+Each group has at least 30 observations, so we don't have to consider collapsing any groups together. We can also see that Non-Hispanic White and Non-Hispanic Black appears to have lower center `lbdldl` values, while Non-Hispanic Asian appears to have higher center values.
+
+### Graphical Summaries
+
+We will now visualize our data through box and violin plots.
+
+```{r, message = FALSE}
+ggplot(c_data, aes(x = ridreth3_c, y = lbdldl)) + 
+  geom_violin(aes(fill = ridreth3_c)) +
+  geom_boxplot(width = 0.3, notch = TRUE) +
+  guides(fill = "none") +
+  coord_flip() +
+  labs(title = "LDL Cholesterol by Race Origin",
+       x = "Race Origin", y = "LDL Cholesterol") + 
+  coord_flip() +
+  theme_bw()
+```
+
+From this plot, we can see that most of the groups are pretty normally distributed with some outliers. The groups that aren't are Non-Hispanic White and Non-Hispanic Black, which appear to be skewed right.
+
+```{r}
+ggplot(c_data, aes(sample = lbdldl, col = ridreth3_c)) +
+  geom_qq() + 
+  geom_qq_line() +
+  facet_wrap(~ ridreth3_c, labeller = "label_both") +
+  guides(col = "none") +
+  theme_bw() +
+  labs(y = "LDL Cholesterol",
+       title = "Normal QQ Plot of LDL Cholesterol by Race Origin")
+```
+Because we are analyzing the distributions of six independent sample groups, we looked at the normality of values more for each group. As seen before, Non-Hispanic White and Non-Hispanic Black are skewed right while the other groups look normally distributed.
+
+### Numerical Summaries
+
+Again, we will look at numeric summaries of `lbdldl` for each group.
+
+```{r, message = FALSE}
+mosaic::favstats(lbdldl ~ ridreth3_c, data = c_data) |>
+  kable()
+```
+
+From this numeric summary, we can see that Non-Hispanic Asian appears to have the highest `lbdldl` values in terms of mean and median. Other Race appears to have the lowest values based on mean, while Non-Hispanic White has the lowest values based on median. We can also see that the variances of all the groups are not equal as the standard deviations of the groups range from 34.24 to 39.39.
+
+## Main Analysis
+
+### Kruskal-Wallis Test
+
+From our visualizations and numeric summary, we can conclude that we should use a Kruskal-Wallis test. This is because all of the ANOVA assumptions aren't met with our data, which does satisfy the assumption of independently obtained samples. However, two of them are not satisfied, which are equal variance of `lbdldl` in each group as well as normal distributions of `lbdldl` in each group.
+
+```{r}
+kruskal.test(lbdldl ~ ridreth3_c, data = c_data)
+```
+
+By running the Kruskal-Wallis rank sum test, we are able to obtain the test's $\chi^2$ statistic as well as the p-value. As we can see, the p-value is 0.174, which is not below our threshold of 0.10.
+
+## Conclusions
+
+We can conclude with 90% confidence that the mean `lbdldl` values of patients by race origin in our data are not statistically different based on the Kruskal-Wallis rank sum test. From the test, we got a p-value of 0.174, which is higher than our cutoff significance value of 0.10. This means that we can't reject our null hypothesis that the mean `lbdldl` values of all six race groups are the same. With this, we can say with 90% confidence that the mean LDL cholesterol values of various race origin groups are statistically similar.
+
+
+# Analysis D: Two-Way (2 x 2) Contingency Table
+
+## The Question
+
+In this analysis, we will investigate the association between `riagendr` and `bpq050a`. Both of these variables are binary and have two categories. For `riagendr`, 0 represents female and 1 represents male. For `bpq050a`, 0 for represents not taking taking prescribed medication for high blood pressure while 1 represents taking prescribed medication for high blood pressure. 
+
+Our research question is:
+
+From before, we saw that females in our data seems to have higher `lbdldl` values than males. With that, does there appear to be an association between a patient's gender and whether or not they are taking prescribed medication for high blood pressure?
+
+## Describing the Data
+
+We will begin by giving `riagendr` and `bpq050a` more descriptive values and then looking at their value distributions.
+
+```{r}
+binary_data <- study1 |>
+  select(seqn, riagendr, bpq050a) |>
+  mutate(riagendr_b = fct_recode(factor(riagendr),
+                                "Male" = "1",
+                                "Female" = "0"),
+         riagendr_b = fct_relevel(riagendr_b, "Male"),
+         bpq050a_b = fct_recode(factor(bpq050a),
+                                 "Not Taking HBP Medication" = "0",
+                                 "Taking HBP Medication" = "1"),
+         bpq050a_b = fct_relevel(bpq050a_b, "Taking HBP Medication"))
+
+binary_data |> tabyl(riagendr_b, bpq050a_b) 
+```
+
+From this tabyl, we can see that for each of the outcome categories (whether or not a patient is taking HBP medication), the values are pretty similar between male and female patients. 
+
+## Main Analysis
+
+We will use a Bayesian augmentation on our data that we will run with twoby2() to get various metrics.
+
+```{r}
+binary_augmented <- table(binary_data$riagendr_b, binary_data$bpq050a_b)
+
+twoby2(binary_augmented + 2, conf.level = 0.90) 
+```
+
+By doing a Bayesian augmentation, we can make conclusions about the individual probabilities, relative risk, odds ratio, and difference in probability values of taking prescribed high blood pressure medication by gender. We can also make conclusions from a chi square test of independence.
+
+### Checking Assumptions
+
+Each cell of our table prior to the Bayesian augmentation had values that were at least 10, so we had no issues with running a twoby2 test on the table.
+
+## Conclusions
+
+From the twoby2 test, we can see a couple of things. We can look at relative risk, which compares the risk of taking prescription medications between genders. In this instance, the relative risk is 0.97 with a 90% confidence interval of (0.93, 1.01). 1 is included in this interval, which indicated that the true relative risk may be 1. While this shows that the risk of taking medication is nearly identical between males and females, this result is not significant with 90% confidence as the p-value of 0.29 is higher than our threshold of 0.10, so we see that it the risk isn't detectably different from 1. For the odds ratio, the result is 0.85 with a 90% confidence interval of (0.66, 1.08) and is also statistically insignificant and isn't detectably different from 1. Had the result been significant, it would mean that the odds of taking high blood pressure prescription medications between genders is the same because 1 is included within the interval. Lastly for the chi-square test of independence, the p-value is 0.27, which means that we reject the null hypothesis. With that, we can conclude that the response distribution (taking medication) is independent and the same for both male and female patients. 
+
+
+# Analysis E: Two-Way (6 x 2) Contingency Table
+
+## The Question
+
+In this analysis, we investigate the association between a patient's race origin (`ridreth3`) and whether or not they are taking medication for high blood pressure (`bpq050a`). There are six values in `ridreth3`: 1 if Mexican American, 2 if Other Hispanic, 3 if Non-Hispanic White, 4 if Non-Hispanic Black, 6 if Non-Hispanic Asian, 7 if Other Race - Including Multi-Racial. For `bpq050a`, 0 represents not taking taking prescribed medication for high blood pressure while 1 represents taking prescribed medication for high blood pressure.
+
+Our research question is:
+
+Is there a statistically significant association between a patient's race origin and whether or not they are taking prescribed medication for high blood pressure?
+
+## Describing the Data and Checking Assumptions
+
+We will begin by giving `ridreth3` and `bpq050a` more descriptive values and then getting a table of expected values.
+
+```{r}
+e_data <- study1 |> 
+  mutate(ridreth3_e = fct_recode(factor(ridreth3),
+                                 "Mexican American" = "1",
+                                 "Other Hispanic" = "2",
+                                 "Non-Hispanic White" = "3",
+                                 "Non-Hispanic Black" = "4",
+                                 "Non-Hispanic Asian" = "6",
+                                 "Other Race" = "7")) |>
+  mutate(bpq050a_e = fct_recode(factor(bpq050a),
+                                "Not Taking HBP Medication" = "0",
+                                "Taking HBP Medication" = "1"))
+
+jk_table <- table(e_data$ridreth3_e, e_data$bpq050a_e)
+
+jk_table
+
+check <- e_data |> 
+  tabyl(ridreth3_e, bpq050a_e) |> 
+  chisq.test()
+
+expected <- check$expected
+
+expected
+```
+
+Here, we create a 6 by 2 table that breaks down whether or not a patient takes high blood pressure medication by their race origin. We also check the expected values for each cell so that we can make sure that chi square assumptions are met. The assumptions are that each cell's expected frequency is at least 5, each cell has no zero counts, and that at least 80% of the cells have expected values of at least 5.
+
+## Main Analysis
+
+### Running the Pearson $\chi^2$ Test
+
+By referring to the expected value table, we can see that all the assumptions are satisfied, which means that we can use a $\chi^2$ test.
+
+```{r}
+chisq.test(jk_table)
+```
+
+Since all the conditions of the Pearson's $\chi^2$ test are met, we run a $\chi^2$ test on our table data. We can see that the $\chi^2$ value from the test is 3.95 and the p-value is 0.56, which is much higher than our threshold of 0.10 from our 90% confidence. 
+
+### Association Plot
+
+We can also create an association plot to compare values between observed and expected values.
+
+```{r}
+assoc_table <- jk_table
+rownames(assoc_table) = c("1", "2", "3", "4", "6", "7")
+colnames(assoc_table) = c("0", "1")
+
+assocplot(assoc_table, xlab = 'Race Origin Group', 
+          ylab = 'Patient Taking HBP Medication Status')
+```
+
+Using the *assocplot* function, we can see the deviations from the assumption of independence of rows and columns in our table. We can see that for groups 1-4, the observed values of `bpq050a_e` are very close to the expected value, while groups 6 and 7 are a bit different. 
+
+```{r, message=FALSE}
+# get absolute values of differences between observed and expected values
+
+jk_matrix <- as.data.frame.matrix(jk_table) 
+
+diff_values <- list()
+for(rowIndex in 1:6) {
+  for(colIndex in 1:2) {       
+    observedVal <- jk_matrix[rowIndex, colIndex]
+    expectedVal <- expected[rowIndex, colIndex + 1]
+    difference <- expectedVal - observedVal
+    diff_values <- append(diff_values, difference)
+  }
+}
+
+diff_matrix <- matrix(diff_values, ncol = 2, nrow = 6, byrow = TRUE)
+rownames(diff_matrix) <- c(1, 2, 3, 4, 6, 7)
+colnames(diff_matrix) <- c(0, 1)
+
+row_names <- c("Mexican American",
+               "Other Hispanic",
+               "Non-Hispanic White",
+               "Non-Hispanic Black",
+               "Non-Hispanic Asian",
+               "Other Race")
+
+col_names <- c("Not Taking HBP Medication",
+               "Taking HBP Medication")
+
+rownames(diff_matrix) = row_names
+colnames(diff_matrix) = col_names
+
+diff_matrix
+
+abs_diff <- abs(as.double(diff_values[seq(1, length(diff_values), 2)]))
+
+abs_diff <- as.data.frame(abs_diff)
+
+ggplot(abs_diff, aes(row_names, abs_diff)) +
+  geom_bar(stat = "identity", fill = 'Dodger Blue') +
+  labs(title = "Absolute Values of Differences Between Observed and Expected Values",
+       y = "Absolute Value of Difference", 
+       x = "Race Origin") + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+To reinforce this, we created a bar chart that visualizes the absolute value of differences between the observed and expected values for each group. In doing so, we can see the raw values in terms how different these values are, which in reality isn't very much, even for groups Non-Hispanic Asian and Other Race.
+
+## Conclusions
+
+In this analysis, we looked at the association between a patient's race origin and whether or not they are taking prescribed medication for high blood pressure. With the data that we had, we used a Pearson's $\chi^2$ test where we got a p-value of 0.5573. This indicates that we can't reject the null hypothesis that the distribution of `bpq050a_e` are the same for race origin groups, as the p-value is above our 90% confidence threshold of 0.10. This means that that the rows and columns of the table are independent, so we can conclude that a patient's race origin isn't associated with whether or not they are taking prescribed medication for high blood pressure. Furthermore, when we looked at the difference between expected and observed values of each race origin group, the largest difference was only 6.16, which means that for each cell, the observed value was nearly the same as the expected value.
+
+
+
+# Session Information
+
+Our session information:
+
+```{r}
+sessionInfo()
+```
+

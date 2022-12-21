@@ -1,0 +1,647 @@
+---
+title: "Investigating the Importance of RXDs to a Patient's LDL Cholesterol"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+linkcolor: blue
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+
+# Setup and Data Ingest 
+
+## Initial Setup and Package Loads in R 
+
+In this section, we load the packages that we will use for study 2.
+
+```{r, message = FALSE, warning = FALSE}
+library(knitr)
+library(rmdformats)
+library(rmarkdown)
+library(GGally)
+library(patchwork)
+library(car)
+library(equatiomatic)
+library(janitor)
+library(magrittr)
+library(mosaic)
+library(naniar)
+library(simputation)
+library(broom)
+library(tidyverse)
+
+library(nhanesA)
+
+## Global options
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+theme_set(theme_bw())
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Loading the Raw Data into R 
+
+To begin, we import our data and only keep the necessary variables needed for the study.
+
+```{r data_load, message = FALSE}
+# raw data
+ldl <- nhanes('P_TRIGLY') |> tibble() |> clean_names()
+demo <- nhanes('P_DEMO') |> tibble() |> clean_names()
+meds <- nhanes('P_RXQ_RX') |> tibble() |> clean_names()
+weight <- nhanes('P_WHQ') |> tibble() |> clean_names()
+alc <- nhanes('P_ALQ') |> tibble() |> clean_names()
+smoke <- nhanes('P_SMQ') |> tibble() |> clean_names()
+
+# get needed data and filter out those 
+ldl <- ldl |> select(seqn, lbdldl)
+demo <- demo |> select(seqn, ridstatr, ridageyr)
+meds <- meds |> select(seqn, rxdcount)
+alc <- alc |> select(seqn, alq170)
+weight <- weight |> select(seqn, whd020)
+smoke <- smoke |> select(seqn, smq040)
+```
+
+
+# Cleaning the Data
+
+## Merging the Data
+
+With our individual datasets, we will merge them on `seqn` and then only keep unique rows for our dataset.
+
+```{r}
+# join data
+new <- left_join(ldl, demo, by = "seqn")
+new1 <- left_join(new, meds, by = "seqn")
+new2 <- left_join(new1, alc, by = "seqn")
+new3 <- left_join(new2, weight, by = "seqn")
+new4 <- left_join(new3, smoke, by = "seqn")
+study2 <- new4
+
+# see if all seqn values are unique
+dim(study2)
+length(unique(study2$seqn))
+
+# keep only distinct rows [some seqn rows repeated]
+study2 <- distinct(study2, seqn, .keep_all = TRUE)
+
+# see if all seqn values are unique
+dim(study2)
+length(unique(study2$seqn))
+```
+
+## The Raw Data
+
+The `study2` dataset currently has 8 variables and 5,090 subjects. The 8 variables we have provide information on a patient's unique identifier, their LDL cholesterol, if they were only interviewed or if they were interviewed and MEC examined, their age, the number of prescription medications they are taking, the amount of times in the past 30 days that they had 4-5+ drinks on an occasion, their weight, and their current smoking status.
+
+```{r}
+glimpse(study2)
+```
+
+
+## Which variables should be included in the tidy data set?
+
+We will filter our data to only include patient's who were interviewed and MEC examined (`ridstatr`) and are adults (`ridageyr`), as well as change the type of `smq040` to factor.
+
+```{r}
+# filter adults and only keep ridstatr values of 2
+study2 <- study2 |>
+  filter(ridstatr == 2) |>
+  filter(ridageyr >= 21) |> 
+  filter(ridageyr < 80)
+
+# factor
+study2 <- study2 |> mutate(smq040 = factor(smq040))
+
+study2
+```
+
+For my study 2 model, the variables that I am going to use are `rxdcount`, `alq170`, `whd020`, and `smq040` to predict a patient's `lbdldl`. The other three variables, `seqn`, `ridstatr`, and `ridageyr`, are in the dataset so that we could merge datasets together and then only keep adult patients who were both interviewed and examined.
+
+## Checking our Outcome and Key Predictor
+
+Our most important variables in this study are `lbdldl` and `rxdcount`, so we will look at a quick numerical summary of each.
+
+```{r}
+df_stats(~ lbdldl + rxdcount, data = study2)
+```
+
+From this summary, we can see that there are 321 missing values for our outcome variables `lbdldl` and 1,635 missing values for our key predictor `rxdcount`. As we will see later, we will just be using complete cases for our final dataset. Furthermore, all values in the dataset are feasible.
+
+## Checking the Quantitative Predictors
+
+We also have two other predictor variables that are quantitative that we have to look at.
+
+```{r}
+df_stats(~ alq170 + whd020, data = study2)
+```
+
+We can see that we have 1,286 missing values for `alq170` and no missing values for `whd020`. As stated before, this doesn't really matter because of how we will use complete cases. Something to look at is the maximum values for each variable, as these are not very possible (999 for `alq170` and 9999 for `whd020`). After looking at the NHANES codebook, we can see that for `alq170`, values of 777 or 999 represent a patient refusing to answer or didn't know. Similarly for `whd020`, values of 7777 or 9999 represent a patient refusing to answer or didn't know, so we'll have to filter out these patients for our dataset. 
+
+```{r}
+study2 <- study2 |>
+  filter(alq170 != 777 & alq170 != 999) |>
+  filter(whd020 != 7777 & whd020 != 9999)
+
+df_stats(~ alq170 + whd020, data = study2)
+```
+
+After rerunning df_stats(), we can see that we effectively removed patients with uninformative value responses
+
+## Checking the Categorical Variables
+
+We also have a categorical predictor `smq040`, which indicates a patient's smoking status. As such, we have to see if the levels are ordered in a logical way. 
+
+```{r}
+levels(study2$smq040)
+
+study2 |> tabyl(smq040)
+```
+
+levels() helps us see that the smoking categories are in a good order and tabyl() allows us to see the value distribution. We have 1,379 missing values, but again this is irrelevant as we will use complete cases.
+
+## Dealing with Missingness and Seeing Our Tidy Dataset
+
+As of right now, we still have patient's who have missing values across the variables in our tidy data. We will now remove `ridstatr` and `ridageyr` as they were used to keep certain patients.
+
+```{r}
+study2 <- study2 |>
+  select(seqn, lbdldl, rxdcount, alq170, whd020, smq040)
+
+study2
+```
+
+We can see that our dataset only holds our relevant study variables now.
+
+### Tibble of Complete Cases
+
+As stated before we will only keep patients with complete data because we are assuming that the missing values are missing completely at random. As such, we will drop the observations that have some 'NA' values.
+
+```{r}
+study2 <- study2 |> filter(complete.cases(study2))
+
+study2
+```
+
+Now that we have our dataset with complete cases, we have to make sure that the values for our variables still satisfy our data requirements.
+
+```{r}
+length(unique(study2$lbdldl))
+
+tabyl(study2$smq040)
+```
+
+We can see that our data still meets the requirements, as our outcome variable has at least 15 unique values and for our categorical variable, there are three levels and each has more than 30 patients.
+
+
+# Codebook and Data Description
+
+## The Codebook
+
+The NHANES dataset combines interviews and physical examinations from adults and children in the United States using surveys examining a nationally representative sample of about 5,000 persons each year. In my work, we used data from the 2017 - March 2020 survey period, and from the following data sets: Demographics (P-DEMO), LDL Cholesterol (P-TRIGLY), Prescription Medications (P_RXQ_RX), Weight History (P_WHQ), Alcohol Use(P_ALQ), and Smoking - Cigarette Use (P_SMQ). We also restricted the data to adults who were both interviewed and MEC examined and are between 21-79 as we don't want to include children or the elderly.
+
+The 5 variables in our tidy data set `study1` are `seqn`, `lbdldl`, `rxdcount`, `alq170`, `whd020`, and `smq040`. The 'Type' column indicates the number of levels in each categorical (factor) variable. For the Type information, 'Quantitative' represents a quantitative variable and 'Categorical (x)' indicates a categorical variable with x levels.
+
+ Variable | Type | Description / Levels
+--------- | ---- | ---------------------
+`seqn` | ID | Subject code identifier of patient
+`lbdldl` | Quantitative | Patient's LDL-cholesterol (mg/dL)
+`rxdcount` | Quantitative | Number of prescription medicines taken by patient
+`alq170` | Quantitative | Number of times in past 30 days patient has had 4-5 drinks on an occasion
+`whd020` | Quantitative | Patient's current self-reported weight (pounds)
+`smq040` | Categorical (3) | Patient's current smoking status: 1 if every day, 2 if some days, 3 if not at all
+
+## Analytic Tibble
+
+Here we will prove that our data is a tibble and print it out.
+
+```{r}
+is_tibble(study2)
+
+study2
+```
+
+## Numerical Data Description
+
+With the variables relevant to our study, we will look at some numerical summaries for each.
+
+```{r}
+Hmisc::describe(study2 |> select(-seqn))
+```
+
+With this summary, we can see that all values are feasible, have a logical level order (if applicable), and have no missing values.
+
+
+# My Research Question
+
+Our dataset contains adults within the age range of 21-79 and who have complete data on all of our variables. The outcome variable `lbdldl` was chosen because LDL (bad) cholesterol is something that I would like to investigate. The predictor variables `rxdcount`, `alq170`, `whd020`, and `smq040` were chosen because of their relationship to LDL cholesterol. The number of prescription medications is relevant because if a patient is taking more medications, they likely have worse health conditions and there is a higher chance that they are taking medications that may increase LDL cholesterol. Similarly, current weight was chosen because it's a decent relative indicator of health. Alcohol and smoking use were selected because both have been observed to increase one's LDL cholesterol.
+
+Our research question:
+
+How accurately can we predict a patient's LDL cholesterol value with the number of prescription medications they are taking and can we improve our predictions by including some other predictor variables (`alq170`, `whd020`, `smq040`) in our `study2` data?
+
+
+
+# Partitioning the Data
+
+To be able to train and test our models, we will use a 70/30 split so that we can train our models with 70% of the data and then test with the remaining 30%.
+
+```{r}
+set.seed(12345)
+
+# take train sample
+study_train <- slice_sample(study2, prop = 0.7)
+# get the rest of the samples
+study_test <- anti_join(study2, study_train, by = "seqn")
+
+# check dimensions
+dim(study_train)
+dim(study_test)
+```
+
+The sum of rows of each (441 and 189) totals the number of rows in our dataset so the data was split correctly
+
+# Transforming the Outcome
+
+## Visualizing the Outcome Distribution
+
+To see if there are any issues with `LBDLDL` in our training data, we will visualize thee values with box, violin, and QQ plots.
+
+```{r}
+p1 <- ggplot(study_train, aes(x = "", y = lbdldl)) +
+  geom_violin(fill = "red") +
+  geom_boxplot(width = 0.25) +
+  labs(title = "Box Plot with Violin Plot of LDL Cholesterol",
+       y = "LBDLDL Value",
+       x = "") + 
+  coord_flip()
+
+p2 <- ggplot(study_train, aes(sample = lbdldl)) +
+  geom_qq() + 
+  geom_qq_line(col = "red") +
+  guides(col = "none") +
+  theme_bw() +
+  labs(y = "LBDLDL Value",
+       title = "Normal QQ Plot of LDL Cholesterol")
+
+p1 + p2
+```
+
+From the box plot with a violin plot overlay and the QQ plot, we can see that the data has a right skew, so we may have to transform our outcome variable.
+
+## `boxCox` function to assess need for transformation of our outcome
+
+Because our train data is right skewed, we want to see if there is a transformation that can make our outcome variable `lbdldl` more normally distributed.
+
+```{r boxCox_plot}
+boxCoxMod <- lm(lbdldl ~ rxdcount + alq170 + whd020 + smq040, data = study2)
+boxCox(boxCoxMod)
+
+powerTransform(boxCoxMod)
+```
+
+From powerTransform(), the estimated transformation parameter is 0.33, so we will either not transform our outcome or we will use a square root transformation
+
+```{r}
+p1 <- ggplot(study_train, aes(x = rxdcount, y = lbdldl)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE) + 
+  geom_smooth(method = "lm", col = "red", formula = y ~ x, se = FALSE) +
+  labs(title = "LBL Cholesterol Scatterplot",
+       x = "Number of Prescription Medications",
+       y = "LDL Cholesterol")
+
+p2 <- ggplot(study_train, aes(x = rxdcount, y = sqrt(lbdldl))) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE) + 
+  geom_smooth(method = "lm", col = "red", formula = y ~ x, se = FALSE) + 
+  labs(title = "square root(LBL Cholesterol Scatterplot)",
+       x = "Number of Prescription Medications",
+       y = "square root(LDL Cholesterol")
+
+p1 + p2
+```
+
+From these two plots, there doesn't look to be much of a difference whether or not we transform our outcome variable. The loess curve appears to be a bit less curved when using the square root transformation, but nothing too noticeable so we won't transform our `lbdldl` variable.
+
+## Numerical Summaries of the Predictors
+
+Before we build our model, we want to look at the value distribution for each of our predictor variables.
+
+```{r}
+study_train |> select(-seqn, -lbdldl) |> 
+  mosaic::inspect()
+```
+
+As a reminder, we have three quantitative predictor variables (`rxdcount`, `alq170`, `whd020`) and one categorical predictor (`smq040`). 
+
+## Scatterplot Matrix and Collinearity Check
+
+A scatterplot matrix can also be utilized to help us see the relationship between our outcome and predictor variables.
+
+```{r, message = FALSE}
+temp_data <- study_train |> 
+  select(rxdcount, alq170, whd020, smq040, lbdldl)
+
+ggpairs(temp_data, title = "Scatterplot Matrix of Predictor Variables",
+        lower = list(combo = wrap("facethist", bins = 20)))
+```
+
+From the scatterplot matrix, we are able to look at a quick overview of the relationships between variables. What we are particularly interested in is the relations between `lbdldl` and the quantitative predictor variables of `rxdcount`, `alq170`, and `whd020`. We can see that `lbdldl` isn't highly correlated with any of our quantitative predictors, with the highest being -0.311. We can also see that `rxdcount` and `alq170` are right skewed, which makes sense because there is a low probability of one having a higher value for these variables. 
+
+In terms of collinearity, there doesn't seem to be any issues between our predictor variables. The greatest magnitude correlation value between predictor variables is 0.142 between `whd020` and `rxdcount`, which is still a low correlation.
+
+```{r}
+mosaic::favstats(lbdldl ~ smq040, data = study_train)
+```
+
+With this breakdown of `lbdldl` distributions for each smoking group, we see that in general, it looks like LDL cholesterol generally decreases as smoking frequency decreases as for each decreasing level, the median and mean `lbdldl` values decrease. Something to note is that level 2 has a relatively small *n* at 39, compared to the other groups' values of 133 and 269, but this likely follows the distribution of values in our target population.
+
+## Numerical Summary of the Outcome
+
+Along with looking at predictor variable value distributions, we want to look at our outcome variable distribution.
+
+```{r}
+mosaic::favstats(~ lbdldl, data = study_train)
+```
+
+With this summary, we can see that the mean value is close to the median value, which indicates that our distribution is pretty symmetrical. We also see that there aren't any missing values, which expected.
+
+
+# The Big Model
+
+## Fitting/Summarizing the Kitchen Sink model
+
+We will begin by fitting our big model, which will predict `lbdldl` using all of our predictor variables.
+
+```{r}
+big_model <- lm(lbdldl ~ rxdcount + alq170 + whd020 + smq040, data = study_train)
+summary(big_model)
+```
+
+By fitting our model, we can see some measures provided about the model like its residual standard error and adjusted $R^2$.
+
+## Effect Sizes: Coefficient Estimates
+
+We will now look at each of the variable coefficients and their 90% confidence interval of values.
+
+```{r}
+tidy(big_model, conf.int = TRUE, conf.level = 0.90) |> 
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |> 
+  kable(dig = 4)
+```
+
+From this summary of our coefficients, we can see that `rxdcount` and `whd020` both have negative coefficients. This means that as values increase, the predicted LDL cholesterol value will decrease. Adversely, `alq170` has a positive coefficient, so with more occasions a patient drinks 4-5+ alcoholic drinks, their predicted `lbdldl` will go up. Lastly, with `smq040` the baseline category is '1', which means that a patient smokes cigarettes every day. For the two other levels, `smq0402` and `smq0403`, the coefficients are negative, meaning that if a patient smokes less than every day, they are predicted to have lower LDL cholesterol.
+
+## Describing the Equation
+
+We will now use the equatiomatic package to see our big model's regression equation more clearly.
+
+```{r, results = 'asis'}
+extract_eq(big_model, use_coefs = TRUE, coef_digits = 4,
+           terms_per_line = 1, wrap = TRUE, ital_vars = TRUE)
+```
+
+This equation is able to tell us how various values for our predictor variables will change the predicted `lbdldl` value with all other predictors held constant. For each increase in `rxdcount`, we expect a patient's LDL cholesterol to decrease by -3.7820 mg/dL (90% confidence interval: (-4.7126, -2.8515)). For each increase in `alq170`, we expect a patient's LDL cholesterol to decrease by -0.0618 mg/dL (90% confidence interval: (-0.5818, 0.4583)). For each increase in `whd020`, we expect a patient's LDL cholesterol to increase by 0.0042 mg/dL (90% confidence interval: (-0.0507, 0.0590)). Because `smq040` is categorical, the model uses a level of '1' as the baseline and then adjusts for if a patient's value is '2' or '3'. In this instance, if a patient's value is '2', then we expect a patient's LDL cholesterol to decrease by -2.8485 mg/dL (90% confidence interval: (-13.2092, 7.5122)). Similarly, if a patient's value is '3', then we expect a patient's LDL cholesterol to decrease by -2.4298 mg/dL (90% confidence interval: (-8.5145, 3.6549)).
+
+# The Smaller Model
+
+## Backwards Stepwise Elimination
+
+To select our variables for the smaller model with less predictor variables, we will use backwards stepwise elimination to get a general idea of possible subsets.
+
+```{r}
+step(big_model)
+```
+
+The backwards stepwise elimination suggests that we should only use `rxdcount` as our predictor variable. For each step, the AIC doesn't decrease by much, so it would be interesting to compare the model with just our key predictor variable and all of our predictor variables.
+
+## Fitting the smaller model
+
+We will now fit our small model with only `rxdcount` predicting `lbdldl`.
+
+```{r fit_mod_small}
+small_model <- lm(lbdldl ~ rxdcount, data = study_train)
+summary(small_model)
+```
+
+## Effect Sizes: Coefficient Estimates
+
+As before, we will look at our coefficients of our model.
+
+```{r}
+tidy(small_model, conf.int = TRUE, conf.level = 0.90) |> 
+  select(term, estimate, std.error, conf.low, conf.high, p.value) |> 
+  kable(dig = 4)
+```
+
+Similar to the big model, `rxdcount` has a negative coefficient, which means that as values increase, the patient's predicted LDL cholesterol will decrease. 
+
+## Small Model Regression Equation
+
+We will use the equatiomatic package again to see our small model's regression equation more clearly.
+
+```{r}
+extract_eq(small_model, use_coefs = TRUE, coef_digits = 4, wrap = TRUE, ital_vars = TRUE)
+```
+
+The equation is able to tell us how various values for our predictor variable `rxdcount` will change the predicted `lbdldl` value. For each increase in `rxdcount`, we expect a patient's LDL cholesterol to decrease by -3.7886 mg/dL (90% confidence interval: (-4.7001,	-2.8771)). This coefficient for `rxdcount` (-3.7886) is very similar to the `rxdcount` coefficient of the big model (-3.7820). 
+
+
+# In-Sample Comparison
+
+## Quality of Fit
+
+To compare the fit of our small and big model, we will get various values ($R^2$, residual standard error, AIC, BIC) that will help us see which model fits better.
+
+```{r}
+big_vals <- glance(big_model) |> 
+  select(-logLik, -deviance) |>
+  round(digits = 3) |>
+  mutate(modelname = "big_model")
+
+small_vals <- glance(small_model) |>
+  select(-logLik, -deviance) |>
+  round(digits = 3) |>
+  mutate(modelname = "small_model")
+
+comparison <- bind_rows(big_vals, small_vals) |>
+  select(modelname, nobs, df, AIC, BIC, everything())
+
+comparison
+```
+
+The two models perform very similar in terms of $R^2$, adjusted $R^2$, residual standard error, AIC, and BIC. Overall though, it seems like our smaller model performs slightly better, as it has lower values for AIC, BIC, and residual standard error which we want. It's also marginally worse in terms of $R^2$, but it outperforms the big model in adjusted $R^2$.
+
+## Assessing Assumptions
+
+### Residual Plots for the Big Model
+
+We will now examine residual plots for our big model.
+
+```{r, fig.width = 10, fig.height = 10} 
+par(mfrow = c(2,2)); plot(big_model); par(mfrow = c(1,1))
+```
+
+From these residual plots for the big model, there aren't any obvious issues for our assumptions of linearity and constant variance. There is a slight right skew in the QQ plot, which may indicate an issue for normality, but the skew doesn't seem very much and as such, doesn't violate the assumption of normality. There are also no issues with points that are highly influential.
+
+### Residual Plots for the Small Model
+
+We will now examine residual plots for our small model.
+
+```{r, fig.width = 10, fig.height = 10}
+par(mfrow = c(2,2)); plot(small_model); par(mfrow = c(1,1))
+```
+
+From these residual plots for the small model, there also aren't any obvious issues for our assumptions of linearity and constant variance. Similarly, there is a slight right skew in the QQ plot, which may indicate an issue for normality, but the skew doesn't seem very much and as such, doesn't violate the assumption of normality. There are also no issues with points that are highly influential.
+
+### Does collinearity have a meaningful impact?
+
+Since we have more than one predictor variable for our big model, we have to check for collinearity between them.
+
+```{r}
+car::vif(big_model)
+```
+
+We can see that we don't have any issues as all GVIF values are below 5.
+
+## Comparing the Models
+
+Based on various metrics to compare our big and small model, I currently believe that the smaller model is marginally better than the large one. 
+
+# Model Validation
+
+To validate our models, we will fit each one to our held out test data and see how they perform.
+
+## Calculating Prediction Errors
+
+### Big Model: Back-Transformation and Calculating Fits/Residuals
+
+We will use augment() to get fitted values from our big model for the test data.
+
+```{r}
+big_aug <- augment(big_model, newdata = study_test) |>
+  mutate(model = "big") |>
+  select(seqn, model, everything())
+
+big_aug
+```
+
+### Small Model: Back-Transformation and Calculating Fits/Residuals
+
+Again, we will use augment() to get fitted values from our small model for the test data.
+
+```{r}
+small_aug <- augment(small_model, newdata = study_test) |>
+  mutate(model = "small") |>
+  select(seqn, model, everything())
+
+small_aug
+```
+
+### Combining the Results
+
+To compare how each model performed in predicting `lbdldl` values, we will now create a new dataset with data from both of our augmented datasets.
+
+```{r}
+model_comp <- union(big_aug, small_aug) |>
+  arrange(seqn, model)
+
+model_comp
+```
+
+Based on this table, we can compare results on the surface between the two models. By looking at the raw fitted and residual values, it looks the models predicted very similar `lbdldl` values.
+
+## Visualizing the Predictions
+
+We will now visualize our predicted `lbdldl` values with our observed `lbdldl` values for each model.
+
+```{r}
+ggplot(model_comp, aes(x = .fitted, y = lbdldl)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = "dashed") + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE, formula = y ~ x) +
+  facet_wrap( ~ model, labeller = "label_both") +
+  labs(x = "Predicted LDL Cholesterol",
+       y = "Observed LDL Cholesterol",
+       title = "Observed vs. Predicted LDL Cholesterol",
+       caption = "Dashed line is where Observed = Predicted")
+```
+
+The two graphs look more or less the same, particularly regarding the loess smooth curve. Both of these models don't have many points along with dashed line, indicating that most predicted `lbdldl` values aren't very similar to the observed values. The only noticeable difference is with the small model, the predicted values look like they are placed on vertical lines but that is because there is only one predictor variable (`rxdcount`) used in the model.
+
+## Summarizing the Errors
+
+Now we will get the errors for each model using mean absolute prediction error, root mean squared prediction error, and maximum absolute error as our metrics.
+
+```{r}
+model_comp |> group_by(model) |>
+  dplyr::summarise(n = n(),
+                   MAPE = mean(abs(.resid)), 
+                   RMSPE = sqrt(mean(.resid^2)),
+                   max_error = max(abs(.resid)))
+```
+
+With this table, we can see that both of the models' performance is nearly identical. The smaller model outperforms the bigger model in terms of RMSPE and max_error by 0.002 and 0.801 respectively. The bigger model outperforms the smaller model in terms of MAPE by 0.098. These metrics allow us to see that the models' residual values as a whole were almost the same.
+
+### Identify the largest errors
+
+Here, we identify the patient in both models that has the largest absolute residual value.
+
+```{r}
+big_largest <- big_aug |>
+  filter(abs(.resid) == max(abs(.resid)))
+
+small_largest <- small_aug |>
+  filter(abs(.resid) == max(abs(.resid)))
+
+bind_rows(big_largest, small_largest)
+```
+
+We can see that for both models, the patient's `seqn` is 117059 and has an observed `lbdldl` of 297. The big model predicted a value of 113.9, corresponding to a residual value of 183.1. The small model predicted a value of 114.7, corresponding to a residual value of 182.3.
+
+### Validated R-square values
+
+Validated $R^2$ values is something that we have to look at for each of our models, as it represents the amount of proportion of `lbdldl` variance accounted for by our predictor variables.
+
+```{r}
+cor(big_aug$lbdldl, big_aug$.fitted)^2
+
+cor(small_aug$lbdldl, small_aug$.fitted)^2
+```
+
+The big model has an $R^2$ value of 0.057 and the small model's value is 0.058, which are effectively the same. Both of these values are lower than our training models where the big model had an $R^2$ of 0.098 and the smaller model had a value of 0.097.
+
+## Comparing the Models
+
+I would select the smaller model here, on the basis of the similar performance in terms of the visualization of errors, and the small improvements in RMSPE and maximum prediction error, as well as validated $R^2$. 
+
+
+# Discussion
+
+## Chosen Model
+
+Considering how similarly the two models performed, model selection can go either way. On one hand, the smaller model can be better in certain scenarios because it's only reliant on one predictor and has less predictors overall. This can help to both compare `rxdcount` and `lbdldl` more directly as well as have shorter model running times relative to the big model because it is less complex. The bigger model can be better because it includes more variables, which means that more aspects of a patient's life is accounted for. This would mean that we can get a more holistic idea of how `lbdldl` is impacted by `rxdcount` along with the various predictors. Furthermore, it may be more representative for future observations as `lbdldl` is determined by much more than just `rxdcount`. I would choose the smaller model because of it's simplicity and how my key predictor variable is the only predictor. This means that I can get a more direct comparison between how the the model predicts a patient's LDL cholesterol based on the number of prescription medications take because no additional variables can impact the `lbdldl` prediction.
+
+## Answering My Question
+
+From our two models, we are able to directly compare predicting `lbdldl` with just `rxdcount` and predicting `lbdldl` with `rxdcount`, `alq170`, `whd020`, and `smq040`. For the first part of our question, we can see that our smaller model with only `rxdcount` doesn't accurately predict a patient's `lbdldl`. Similarly, the big model doesn't accurately predict a patient's `lbdldl`, with an $R^2$ value that is essentially identical. With these two models, we can see that the addition of `alq170`, `whd020`, and `smq040` as predictors didn't add any value relative to only using `rxdcount`, as all of our evaluation metrics led us to believe that the two models performed nearly the same.
+
+## Next Steps
+
+My next step would be to use a better method to deal with missing values rather than only keeping samples that have complete data. Our dataset originally had 3,922 observations prior to filtering out complete cases and then only had 630 afterwards. With this much smaller dataset, the models couldn't be trained as well because they have less observations to learn from, in turn likely decreasing model accuracy. Other possible methods that we could use to deal with missing values includes various ways of imputation. I think that for me, I would find the two most important variables for our big model using the original dataset. After that, I would remove observations that are missing values for either of the most important variables and then use those two values to impute other missing values.
+
+## Reflection
+
+Something that I would've changed in my approach to study 2 with what I know now is the variables chosen as predictors. I should've checked to see if the predictor variables had at least some sort of correlation to our outcome variable `lbdldl`. Referring back to our scatterplot matrix, we can see that `alq170` and `whd020` have a correlation of ~0 with `lbdldl`, which indicates that there isn't really a relationship between either of these variables and `lbdldl`. Furthermore, it looks like for `smq040` the `lbdldl` value distributions are pretty similar for each level. With these uncorrelated predictor variables, they didn't make much of an impact in predicting LDL cholesterol values, which can be seen by our small model of just `rxdcount` performing nearly identical to our big model with all four predictor variables. By having different predictor variables, the big model could've performed better and there would've been a much more interesting comparison between my big and small model.
+
+# Session Information
+
+Here is our session information:
+
+```{r}
+sessionInfo()
+```
