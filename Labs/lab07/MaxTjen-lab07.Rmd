@@ -1,0 +1,159 @@
+---
+title: "Max Tjen: Lab 07 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(tidyverse)
+library(naniar)
+library(janitor)
+library(broom)
+library(kableExtra)
+library(patchwork)
+
+theme_set(theme_bw())
+```
+
+
+# Question 1
+
+```{r}
+# read and mutate data
+data <- readxl::read_excel("/Users/mtjen/Desktop/431/labs/lab07/lab07_trial.xls") |>
+  mutate(group = as.factor(group),
+         partner = as.factor(partner),
+         age = as.numeric(age),
+         sbp_baseline = as.numeric(sbp_baseline),
+         sbp_follow = as.numeric(sbp_follow)) |>
+  mutate(group = fct_relevel(group, "1", "2", "3"))
+
+# check missingness
+miss_var_summary(data) |>
+  kbl(digits = 3) |> kable_classic(font_size = 28)
+    
+# subjects per group
+data |> count(group) |>
+  kbl(digits = 3) |> kable_classic(font_size = 28)
+
+#  group summaries
+data |> tabyl(group, partner) |>
+  kbl(digits = 3) |> kable_classic(font_size = 28)
+
+mosaic::favstats(age ~ group, data = data) |>
+  kbl(digits = 3) |> kable_classic(font_size = 28)
+
+mosaic::favstats(sbp_baseline ~ group, data = data) |>
+  kbl(digits = 3) |> kable_classic(font_size = 28)
+```
+
+Based on the three baseline variables partnership, age, and baseline blood pressure of each group, it appears that the groups are comparable. For each variable, there aren't any significant differences between the groups, as all of them have very similar distributions. One thing to note though is that group 3's baseline blood pressure are slightly lower than the other two groups overall by about 10 mm Hg, while groups 1 and 2 are nearly identical.
+
+
+# Question 2
+```{r, message = FALSE}
+# histogram
+p1 <- ggplot(data, aes(x = sbp_follow)) +
+  geom_histogram(fill = "dark red") +
+  labs(title = "Distribution of sbp_follow Values", 
+       x = "Follow Up SBP Values",
+       y = "Value Count")
+
+# QQ plot
+p2 <- ggplot(data, aes(sample = sbp_follow)) +
+  geom_qq(col = "black") + 
+  geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q Plot",
+       x = "",
+       y = "")
+
+p1 / p2
+```
+
+To assess if sbp_follow follows a normal distribution, I plotted a histogram of values too visualize the distribution along with a QQ plot to see if values follow a normal QQ line. From these plots, we can conclude that sbp_follow does follow a normal distribution, as there doesn't appear to be any skew or issues with values along the QQ line.
+
+
+# Question 3
+```{r}
+ggplot(data, aes(x = group, y = sbp_follow)) +
+  geom_violin(aes(fill = group)) + 
+  geom_boxplot(width = 0.25) + 
+  coord_flip() + 
+  labs(title = "SBP Follow Up Value Distributions by Treatment Group",
+       x = "Treatment Group",
+       y = "SBP Follow Up Values")
+```
+
+ANOVA tests assume that each group has a normal distribution and there is equal variance across all groups. From the image, it appears that the variances for all three groups are very similar, however there are some issues with the normality assumption. Group 3 is normally distributed and group 1 appears pretty normal with a slight left skew. Group 2 looks skewed right though, which means that the ANOVA normality assumption may not be met.
+
+
+# Question 4
+```{r}
+model4 <- lm(sbp_follow ~ group, data = data)
+
+anova(model4)
+```
+
+From the ANOVA test with a 90% confidence level, we can see that one's treatment group is significant as the p-value is below the threshold of 0.10 for group and is $2.2e^{-16}$. This means that we can conclude that there is a statistically significant difference between the means of the three treatment groups. 
+
+
+# Question 5
+```{r}
+model5 <- lm(sbp_follow ~ group + sbp_baseline, data = data)
+
+anova(model5)
+```
+
+From the ANOVA test with a 90% confidence level, we can see that adding baseline SBP levels to our model is not statistically significant as to determining a patient's follow up SBP level. This is because it's p-value is 0.5689, which is above the threshold of 0.10. The patient's treatment group is still significant though, as the p-value has stayed the same with a value of $2.2e^{-16}$.
+
+
+# Question 6
+```{r}
+model6 <- lm(sbp_follow ~ group + sbp_baseline + partner, data = data)
+
+anova(model6)
+```
+
+From the ANOVA test with a 90% confidence level, we can see that adding partner to our model is not statistically significant as to determining a patient's follow up SBP level. This is because it's p-value is 0.8517, which is above the threshold of 0.10. This means that it doesn't play a meaningful role in a model for our outcome variable of follow up SBP. The model's quality of fit also hasn't improved, as the residual variance is the highest of all the models with a value of 86.4, while model 4 had a variance of 85.9 and model 5 had a variance of 86.1. The addition of partner hasn't changed our estimates about the impact of the treatment groups on the outcome much, if at all, as it's p-value stayed the same as the previous models.
+
+
+# Question 7
+```{r}
+model7 <- lm(sbp_follow ~ group + sbp_baseline + age, data = data)
+
+bind_rows(glance(model4), glance(model5), glance(model6), glance(model7)) |>
+  mutate(model_vars = c("Model 4", "Model 5", "Model 6", "Model 7")) |>
+  select(model_vars, r.squared, adj.r.squared, sigma, AIC, BIC) |>
+  kable(digits = c(0, 4, 4, 4)) |>
+  kable_minimal(font_size = 28)
+```
+
+By comparing the four models using quality of fit metrics, it appears that all of the models perform very similarly. Every model has nearly identical values for all of the measures, which may signify that the addition of extra variables doesn't add much value to the model with only treatment group as the predictor variable. None of the models stand out as better or worse than the others because of how marginal all of the differences are. We are pretty much only able to distinguish which models are slightly better because of how many decimals we show, so in essence, all of the models perform nearly the same.
+
+
+# Question 8
+
+From the analyses completed in the previous questions, we used p-values of various predictor variables to see if they are statistically significant in terms of predicting follow up SBP values. Spiegelhalter discusses the potential issues with p-values, so while these values somewhat indicate if they are significant, they aren't the best as they doesn't measure a result's importance or effect. Furthermore, p-values aren't a good indication of evidence for or against a model being the best. For questions 4-7 where we create various models, the ANOVA results don't effectively allow us to try and find the best fitting model. It's only once we look at some measures of quality of fit are we able to try and see which model fits the data the best. Even with our quality of fit metric results, we still can't reasonably determine one model to be the best to move forward with. However, it at least gives more ideas and provides more evidence than the ANOVA p-value results, and for other scenarios, the quality of fit metrics may clearly determine which model is best.
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
