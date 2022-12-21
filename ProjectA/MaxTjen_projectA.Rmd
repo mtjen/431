@@ -1,0 +1,752 @@
+---
+title: "Diabetes Prevalence Across Geographically Diverse States in the US"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: TRUE
+    code_folding: show
+    code_download: TRUE
+---
+
+# Preliminaries
+
+```{r setup, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="100")
+opts_chunk$set(comment=NA)
+opts_knit$set(width=75)
+```
+
+## R Packages
+
+```{r load_packages_here, message = FALSE}
+library(janitor)
+library(naniar)
+library(tidyverse)
+library(broom)
+library(equatiomatic)
+library(kableExtra)
+library(patchwork)
+library(glue)
+```
+
+## Data Ingest
+To begin, we read the data from a csv format into a tibble within R, skipping over the row containing data for the entire US and keeping only counties that are actually counties (ranked).
+
+```{r, message=FALSE}
+chr_2022_raw <- read_csv("analytic_data2022.csv", skip = 1) |> filter(county_ranked == 1)
+```
+
+
+
+# Data Development
+
+
+## State Selection
+Next is the selection of states to investigate - I've selected Arizona, Georgia, Massachusetts, Ohio, and Washington. I've picked these states because I wanted to get a good distribution of areas across the US, so each state location-wise is quite different than the others. Furthermore, I picked states that had similar populations, as all five states ranked between 7 and 15 in terms of population. The total amount of counties was 315, falling within the range needed, with Arizona having 15, Georgia having 159, Massachusetts having 14, Ohio having 88, and Washington having 39 counties respectively.
+
+```{r}
+# select states
+chr_2022 <- chr_2022_raw |>
+  filter(state == "OH" | state == "GA" | state == "MA" | state == "WA" | state == "AZ")
+
+# counties by state
+chr_2022 |> tabyl(state)
+
+# tibble dimensions
+dim(chr_2022)
+```
+
+## Variable Selection
+Along with the four required variables (fipscode, county, state, and county_ranked), we had to select five more variables. We selected diabetes prevalence (v060_rawvalue) to be the outcome variable, median income (v063_rawvalue) and adult smoking (v009_rawvalue) to be quantitative variables, excessive drinking (v049_rawvalue) to be the binary variable, and limited access to healthy foods to be the categorical variable (v083_rawvalue). Diabetes prevalence was chosen as obesity has been significantly increasing recently around the world, particularly in the US. Median income was chosen as it has been well documented that people with lower income are at higher risk of having diabetes. Adult smoking was chosen because similar to income, it's been found to increase one's chances of having diabetes. Excessive drinking was selected as it also has been found to increase the risk of diabetes. Lastly, limited access to healthy foods was selected as if one didn't have access to healthy foods, they would be more prone to buying unhealthy ones that would lead to higher chances of obesity and diabetes. Each variable had to be adjusted according (scaling wise) to become an appropriate value, such as a percent. For excessive drinking, the cutoff chosen between a 0 and 1 value was the mean excessive drinking percentage. For limited access to healthy foods, each category was evenly split as to how many counties were in each.
+
+```{r}
+# select variables
+chr_2022 <- chr_2022 |>
+  select(fipscode, county, state, county_ranked, v060_rawvalue, v063_rawvalue, v009_rawvalue, 
+         v049_rawvalue, v083_rawvalue) |>
+  rename(diabetes_prevalence = v060_rawvalue, 
+         median_income = v063_rawvalue,
+         adult_smoking = v009_rawvalue,
+         excessive_drinking = v049_rawvalue,
+         limited_access_healthy_foods = v083_rawvalue) |>
+  mutate(diabetes_prevalence = diabetes_prevalence * 100,
+         median_income = median_income / 1000,
+         adult_smoking = adult_smoking * 100,
+         excessive_drinking = excessive_drinking * 100,
+         limited_access_healthy_foods = limited_access_healthy_foods * 100)
+```
+
+
+## Variables to Factors
+For variable 4 (excessive_drinking), we made it a binary variable rather than keep it quantitative. To split values into two distinct categories, the mean value was used as a cutoff, with values of percentages below the mean set to 0, and otherwise set to 1. The 5th variable (limited access to healthy foods) was also made categorical, however this time it's multi-categorical rather than binary. To achieve this and ensure that all the categories would have an appropriate amount of values, we used the cut2 function, which split up values into categories such that each category has the same amount of values. After finding what the intervals were for each category, each one was refactored into numerical values, ranging from 0-5, albeit with some NA values that weren't factored in.
+
+```{r}
+chr_2022 <- chr_2022 |>
+    mutate(fipscode = str_pad(fipscode, 5, pad = "0"),
+           state = factor(state))
+
+# make excessive_drinking a binary variable
+chr_2022 <- chr_2022 |>
+    mutate(excessive_drinking_cat = case_when(
+                   excessive_drinking < mean(excessive_drinking) ~ 0, TRUE ~ 1),
+           excessive_drinking_cat = factor(excessive_drinking_cat))
+
+# make limited access to healthy foods categorical
+chr_2022 <- chr_2022 |>
+    mutate(limited_healthy_cat = factor(Hmisc::cut2(limited_access_healthy_foods, g = 5)))
+
+# see intervals for categories
+unique(chr_2022["limited_healthy_cat"])
+
+# recode factor values
+chr_2022 <- chr_2022 |>
+    mutate(limited_healthy_cat = fct_recode(limited_healthy_cat,
+                                            "lowest" = "[ 0.00, 2.76)",
+                                            "low" = "[ 2.76, 5.51)",
+                                            "middle" = "[ 5.51, 8.39)",
+                                            "high" = "[ 8.39,12.51)",
+                                            "highest" = "[12.51,47.43]"))
+```
+
+### Checking value distributions
+
+```{r}
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+
+# get structure
+str(chr_2022)
+```
+
+
+## Revising Order of Variables
+
+```{r}
+chr_2022 <- chr_2022 |> relocate(county_ranked, .after = last_col())
+```
+
+
+
+## Three Important Checks
+1) 75% completeness of data for each state
+2) Raw versions of variables must have at least 10 distinct non-missing values
+3) 10 counties in each category for categorical variables
+
+```{r}
+# check completeness (1)
+chr_2022 |> miss_var_summary()
+
+# ensure no issues
+mosaic::favstats(limited_access_healthy_foods ~ state, data = chr_2022) |>
+  select(state, n, missing) |>
+  mutate(pct_available = 100 * (n - missing) / n) |>
+  kable()
+
+# check distincts (2)
+chr_2022 |> summarize(across(diabetes_prevalence:limited_access_healthy_foods, 
+                             ~n_distinct(.)))
+
+# check amount of counties for each categorical variable (3)
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+```
+
+
+
+# Our Analytic Tibble
+
+
+## Printing and Summarizing
+We have to demonstrate a few things about our data. This includes printing the tibble, showing that each quantitative variable has at least 15 distinct values, and that each state has at least 75% completeness of data.
+
+```{r}
+chr_2022
+
+Hmisc::describe(chr_2022)
+
+# see number of distinct values per column
+chr_2022 |> summarize(across(diabetes_prevalence:limited_healthy_cat, ~n_distinct(.)))
+
+# see number of missing values for each state -> all above 75% completeness
+chr_2022 |> filter(state == "AZ") |> miss_var_summary()
+chr_2022 |> filter(state == "GA") |> miss_var_summary()
+chr_2022 |> filter(state == "OH") |> miss_var_summary()
+chr_2022 |> filter(state == "MA") |> miss_var_summary()
+chr_2022 |> filter(state == "WA") |> miss_var_summary()
+
+# number of values per category -> see task 4, checking value distributions
+
+# statistics on quantitative variables and original versions of binary and categorical 
+mosaic::favstats(~diabetes_prevalence, data = chr_2022)
+mosaic::favstats(~median_income, data = chr_2022)
+mosaic::favstats(~adult_smoking, data = chr_2022)
+mosaic::favstats(~excessive_drinking, data = chr_2022)
+mosaic::favstats(~limited_access_healthy_foods, data = chr_2022)
+
+# show value distributions for categorical variables
+chr_2022 |> tabyl(state)
+chr_2022 |> tabyl(excessive_drinking_cat)
+chr_2022 |> tabyl(limited_healthy_cat)
+```
+
+## Saving and Sharing
+We will save the data as an R dataset into the same folder as the project proposal.
+
+```{r}
+chr_2022
+
+# save file as R dataset
+saveRDS(chr_2022, file = "chr_2022_Max_Tjen.Rds")
+```
+
+
+# Codebook
+We also have to create codebooks for each state and variable. For the state codebook, information about each state's name, abbreviation, and number of counties is provided. For the variable codebook, information about each variable's name, description, original variable name, and number of missing values is provided.
+
+```{r}
+# get amount of counties by state
+chr_2022 |> count(state)
+
+# get amount of missing values by column
+chr_2022 |> miss_var_summary()
+
+# get median value cutoff of unemployment percentage 
+summary(chr_2022["excessive_drinking"])
+```
+
+## State Table
+
+state | abbreviation | # of counties
+------|--------------|--------------
+Arizona | AZ | 15
+Georgia | GA | 159
+Massachusetts | MA | 14
+Ohio | OH | 88
+Washington | WA | 39
+-|-|-
+Total | - | 315
+
+## Variable Table
+
+Variable | Description | Original Variable | # Missing Values
+---------|-------------|-------------------|-----------------
+fipscode | 5-digit FIPS code | fipscode | 0
+county | name | county | 0
+state | state abbreviation | state | 0
+county_ranked | county ranked (yes = 1, no = 0) | county_ranked | 0
+diabetes_prevalence | [outcome] diabetes prevalence percentage | v060_rawvalue | 0
+median_income | [quantitative] median household income in thousands | v063_rawvalue | 0
+adult_smoking | [quantitative] adult smoking percentage | v009_rawvalue | 0
+excessive_drinking | excessive drinking percentage | v049_rawvalue | 0 | [binary]
+limited_access_healthy_foods | limited access to healthy foods percentage | v083_rawvalue | 5
+excessive_drinking_cat | [categorical] 2 categories: 0 if value < 18.02, 1 if otherwise (see task 4 for how values to split variable was chosen) | v049_rawvalue | 0
+limited_healthy_cat | [categorical] 5 categories: 'lowest' if value <2.76, 'low' if 2.76 <= value < 5.51, 'middle' if 5.51 <= value < 8.39, 'high' if 8.39 <= value < 12.51, 'highest' if 12.51 <= value <= 47.43 (see task 4 for how values to split variable was chosen) | v083_rawvalue | 5
+
+
+# Biggest Challenge
+The most challenging part of the project so far for me was to convert the limited access to healthy foods variable into a multi-categorical variable. The process wasn't too hard, more so just the best way to do it. For example, in the beginning, I wanted to use specified values to be cutoffs. However, because of the requirement of having at least 10 counties in each category, this wasn't possible because of the range of data and the distribution. There were a couple of other methods I flirted with, but each of them had some sort of downfall that led to them being tossed out. At the end of the day, I went with a simple even cut, where the cut2 function divided each category evenly so that each one consists of the same amount of counties (+-1). 
+
+
+# Analysis 1
+
+## Variables
+We will be using median_income as the quantitative predictor variable and diabetes_prevalence as the outcome variable. The median_income variable measures the median household income in thousands of dollars of residents in the county and the diabetes_prevalence variable measures the diabetes prevalence percentage of residents in the county. From our tibble (chr_2022), the variables are listed as median_income (predictor) and diabetes_prevalence (outcome) across the states of Arizona, Georgia, Massachusetts, Ohio, and Washington, and each variable has 315 counties with complete data. For Cuyahoga County, Ohio, the values of the predictor and outcome variable are median_income = 55.128 and diabetes_prevalence = 11.1.
+
+```{r}
+# only get median_income and diabetes_prevalence
+a1_data <- chr_2022 |> 
+  select(median_income, diabetes_prevalence) |> 
+  filter(complete.cases(median_income, diabetes_prevalence))
+
+dim(a1_data)
+
+# get values for Cuyahoga County
+chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(median_income, diabetes_prevalence)
+```
+
+## Research Question
+How well does a county's median income predict their diabetes prevalence in 315 counties across the states of Arizona, Georgia, Massachusetts, Ohio, and Washington?
+
+## Data Visualization
+```{r, message = FALSE}
+ggplot(a1_data, aes(x = median_income, y = diabetes_prevalence)) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Median Income and Diabetes Prevalence",
+       x = "Median Income of County in Thousands of Dollars",
+       y = "Diabetes Prevalence Percentage of County")
+```
+
+From this plot, it appears that there is a negative correlation between counties' median income and diabetes prevalence. While the variable relationship looks pretty linear, there appears to be a curve, which indicates that there is some skew in the data. This may mean that a transformation may be needed before running a linear model on the data.
+
+
+## Transformation Assessment
+
+When looking at transformations, we looked at using a logarithm, an inverse, or a square transformation on the outcome variable (diabetes prevalence). To evaluate each of them, a QQ plot was used and compared with the other transformations, including a QQ plot of the untransformed data. From these plots, it appeared that a logarithm transformation appears to work best with this subset of data, as the data followed the QQ line the best. Although the data is still skewed and a slight curve still exists, the data isn't as skewed as before. 
+
+```{r, message = FALSE}
+ggplot(a1_data, aes(x = median_income, y = log(diabetes_prevalence))) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Median Income and Diabetes Prevalence",
+       x = "Median Income of County in Thousands of Dollars",
+       y = "log(Diabetes Prevalence Percentage of County)")
+```
+
+
+## Fitted Model
+
+```{r}
+a1_model <- lm(log(diabetes_prevalence) ~ median_income, data = a1_data)
+
+# R^2, number of observations
+glance(a1_model) |> select(r.squared, sigma, nobs)
+
+# pearson correlation
+cor(a1_data$median_income, a1_data$diabetes_prevalence)
+```
+
+
+### Prediction Equation
+```{r}
+# coefficients
+extract_eq(a1_model, use_coefs = TRUE, operator_location = "start",
+           wrap = TRUE, coef_digits = 2)
+```
+
+The prediction equation is log(diabetes_prevalence) = 3.02 - 0.01(median_income). This means that if a county has a median income of 0,000 dollars, then the expected log value of the county's diabetes prevalence percentage is 3.02. It also means that for each increase of 1,000 dollars of a county's median income, the expected log value of the county's diabetes prevalence percentage will decrease by 0.01.
+
+### Model Coefficients
+```{r}
+tidy(a1_model, conf.int = TRUE, conf.level = 0.90) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2)
+```
+
+
+### Summaries of Model Fit
+ $R^2$   Residual Standard Error   Number of Fitted Observations   Pearson Correlation
+------- ------------------------- ------------------------------- ---------------------
+ 0.585           0.128                          315                      -0.746
+
+
+## Residual Analysis
+
+### Residual Plots
+```{r, message = FALSE}
+a1_aug <- augment(a1_model, newdata = a1_data)
+
+p1 <- ggplot(a1_aug, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) +
+  labs(title = "Residuals vs. Fitted Values", 
+       x = "Fitted log(diabetes_prevalence) Values", y = "Residuals")
+
+p2 <- ggplot(a1_aug, aes(sample = .resid)) +
+  geom_qq(col = "black") + 
+  geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q: Model Residuals")
+
+p1 / p2
+```
+
+From the first plot, it appears that there may be some non-linearity in the regression relationship as there is a curve in the residuals v. fitted values plot. This means that the model fits some points better than others, as there isn't a relative constant residual value. The variance across the board is also pretty constant, with the left side looking a bit unbalanced relative to the right side likely because of its point scarcity. From the second plot, it appears that the residuals are pretty normally distributed and has a couple of outliers on each end of the value extremes.
+
+### Cuyahoga County Comparison
+
+```{r}
+# get income and diabetes values
+cuyahoga <- chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(median_income, diabetes_prevalence)
+
+# predict with model
+cuyahoga_prediction <- augment(a1_model, newdata = cuyahoga)
+# get untransformed value -> un-log()
+fitted_diabetes <- exp(cuyahoga_prediction$.fitted)
+
+glue("Cuyahoga Actual: {cuyahoga$diabetes_prevalence}%
+Cuyahoga Predicted: {round(fitted_diabetes, 2)}%")
+```
+
+### Largest Residual Counties
+
+```{r}
+# get predicted values for all counties
+plot(a1_model, which = c(1:2))
+
+# print counties in order of residual magnitude
+indices <- c(180, 73, 175)
+for (index in indices) {
+  # original data
+  print(chr_2022[index, ] |> select(county, state, median_income, diabetes_prevalence))
+  # residual value
+  print(a1_aug[index, ] |> select(median_income, diabetes_prevalence, .fitted, .resid))
+}
+```
+
+The county with the largest absolute value residual is Franklin County, MA (-0.356). For the second largest absolute value residual, there are two counties that are tied: Forsyth County, GA (0.316) and Barnstable County, MA (-0.316).
+
+## Conclusions and Limitations
+This analysis section investigated the relationship between counties' median household income and their diabetes prevalence percentage. Based on the analysis performed, it appears as if there is a decently negative relationship between the two variables. This can be most clearly seen by the pearson correlation score of -0.746. The residual standard error values also points to the model being pretty reliable in predicting county diabetes prevalence percentages. When converting the residual standard error of 0.128 back to the original range ($e^{0.128}$), the value is 1.137. This indicates the standard deviation of residuals, so a low score of 1.137 means that the fitted values tend to be pretty close to the actual ones. While these demonstrate a relatively strong correlation, the model's $R^2$ score of 0.585 shows that median household income may not be a very good predictor of diabetes prevalence variability. 
+
+Based on the data analysis, there does appear to be some limitations to our conclusions from analysis 1. The first linear model assumption of a linear relationship may not be fully met by our data, even once it's transformed. When looking at the residuals versus fitted values plot, a slight curve can be seen. This means that the relationship between median income and log(diabetes prevalence) may not be fully linear, so a linear model may not be the best way to use median income to predict diabetes prevalence. Some of this may be attributed to outlier values though, which can be seen on the normal QQ plot of residuals. Most of the values stay along the normal line, although at each of the ends, there are some outliers. While there aren't that many, the outliers may skew the model results a bit in one way or another. These outliers may also be due to our data's selection of states, regarding median household income. Regarding median income, Massachusetts and Washington are both among the top 7 states and are pretty well above the US median income while Ohio and Georgia are in the bottom 15 states and noticably lower than the US median. This means that this subset of states may not be best suited to accurately represent the US when relating median household income to diabetes prevalence percentage.
+
+
+# Analysis 2
+
+## Variables
+
+For analysis 2, we will be using the limited access to healthy food categorical  variable (limited_healthy_cat) as the predictor with a baseline category of 'lowest' and diabetes prevalence (diabetes_prevalence) as the outcome variable from the chr_2022 tibble. limited_healthy_cat represents a category that corresponds to a county's percentage of limited access to healthy foods, so in essence the percentage of residents that can't easily obtain healthy foods. Within the variable, there are five categories, which were divided using a method that made sure each category had an equal number of counties (+- 1). The diabetes_prevalence variable measures the diabetes prevalence percentage of residents in the county. The counties in the data come from Arizona, Georgia, Massachusetts, Ohio, and Washington and there are 5 counties with missing data for the predictor variable. With this, we are going to drop these counties as make a very small percentage (1.59%) of the entire dataset and they were also excluded when splitting limited_healthy_cat into various categories For Cuyahoga County, Ohio, the values of the predictor and outcome variable are limited_healthy_cat = 'low' and diabetes_prevalence = 11.1.
+
+```{r}
+# only get limited_healthy_cat and diabetes_prevalence
+a2_data <- chr_2022 |> 
+  select(limited_healthy_cat, diabetes_prevalence) |> 
+  filter(complete.cases(limited_healthy_cat, diabetes_prevalence))
+
+dim(a2_data)
+
+# get values for Cuyahoga County
+chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(limited_healthy_cat, diabetes_prevalence)
+```
+
+## Research Question
+
+Are there statistical significant differences in mean values of diabetes prevalence for each progressive level of limited access to healthy foods (lowest-low, low-middle, middle-high, high-highest) in 310 counties across the states of Arizona, Georgia, Massachusetts, Ohio, and Washington?
+
+## Data Visualization
+
+```{r}
+ggplot(a2_data, aes(x = limited_healthy_cat, y = diabetes_prevalence)) +
+  geom_violin(aes(fill = limited_healthy_cat)) + 
+  geom_boxplot(width = 0.25) + 
+  coord_flip() + 
+  labs(title = "Diabetes Prevalence by Limited Access to Healthy Foods Level",
+       x = "Limited Access to Healthy Foods Level",
+       y = "Diabetes Prevalence")
+
+mosaic::favstats(diabetes_prevalence ~ limited_healthy_cat, data = a2_data)
+```
+
+For analysis 2, we will not be transforming the outcome variable as the outcome variable is pretty normally distributed with the exception of a few outliers. Furthermore, the categorical predictor variable has very similar variance across all category levels. From the boxplot with violin plots, it appears that all of the predictor variable levels have a similar range of values. It can also be seen that the levels are all relatively normally distributed, albeit with various levels of peak values. None of the levels appear to be near identical, in any sense, but one interesting thing to look at is the median values of each category level. Excluding the 'lowest' level, the median value of diabetes prevalence of each level increases within each level, which may indicate that with higher levels of limited access to healthy foods, there are higher levels of diabetes prevalence.
+
+## Fitted Model
+
+```{r}
+a2_model <- lm(diabetes_prevalence ~ limited_healthy_cat, data = a2_data)
+```
+
+
+### Prediction Equation
+```{r}
+# coefficients
+extract_eq(a2_model, use_coefs = TRUE, operator_location = "start",
+           wrap = TRUE, coef_digits = 2, terms_per_line = 1)
+```
+
+The prediction equation is diabetes_prevalence = 12.29 - 1.53(limited_healthy_cat$_{low}$) - 1.21(limited_healthy_cat$_{middle}$) - 0.85(limited_healthy_cat$_{high}$) + 0.80(limited_healthy_cat$_{highest}$). This means that a county's predicted diabetes prevalence is dependent on their limited access to healthy foods categorical level. If their level is lowest, then the expected diabetes prevalence is 12.29. Since each county can only be in one category level, then at most only one of the coefficients will be used. If their level is lowest, then it's expected that their diabetes prevalence will be the intercept value (12.29). If their level is low, then it's expected that their diabetes prevalence will decrease by 1.53 to 10.76. If their level is middle, then it's expected that their diabetes prevalence will decrease by 1.21 to 11.08. If their level is high, then it's expected that their diabetes prevalence will decrease by 0.85 to 11.44. If their level is highest, then it's expected that their diabetes prevalence will increase by 0.80 to 13.09.
+
+### Model Coefficients
+
+```{r}
+tidy(a2_model, conf.int = TRUE, conf.level = 0.90) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2)
+```
+
+### Summaries of Model Fit
+```{r}
+tidy(anova(a2_model)) |> kbl(digits = 3) |> kable_classic_2()
+
+glance(a2_model) |> select(r.squared, sigma, nobs)
+```
+
+ $R^2$   Residual Standard Error   Number of Fitted Observations
+------- ------------------------- -------------------------------
+ 0.132           2.19                          310
+ 
+ 
+From the Anova table, we can see that we can reject the null hypothesis since the p-value is smaller than 0.10 (can't see because of digits but value is 8.433e-09). This means that at least one of the mean values of the category groups is statistically different than the others. Since we can conclude that a county's level of limited access to healthy foods provides meaningful predictive value as to the means' of each group, we will perform Tukey's Honestly Significant Differences test to see if there are statistically differences between the mean's of each group versus all the other groups.
+
+```{r}
+TukeyHSD(aov(lm(diabetes_prevalence ~ limited_healthy_cat, data = a2_data)), 
+         conf.level = 0.90, ordered = FALSE)
+```
+
+By running Tukey's Honestly Significant Differences test, we can determine which specific groups of limited access to healthy foods have statistically different means. Using a 90% confidence interval again ($\alpha$ = 0.10), we can see that 5 pairs of groups have statistically different diabetes prevalence mean's. Those groups would be low-lowest (0.001), middle-lowest (0.020), highest-low (0.000), highest-middle (0.000), and highest-high (0.000).
+
+
+## Prediction Analysis
+
+### Residual Plot
+```{r, message = FALSE}
+a2_aug <- augment(a2_model, newdata = a2_data)
+
+p1 <- ggplot(a2_aug, aes(x = .fitted, y = .resid, color = limited_healthy_cat)) +
+  geom_point() + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Residuals vs. Fitted Values", 
+       x = "Fitted diabetes_prevalence Values", y = "Residual Values")
+
+p2 <- ggplot(a2_aug, aes(sample = .resid)) +
+  geom_qq() + 
+  geom_qq_line(col = "red") + 
+  labs(title = "Residual QQ Plot",
+       y = "")
+
+p3 <- ggplot(a2_aug, aes(x = .resid, y = "")) +
+  geom_violin(fill = "dodger blue") +
+  geom_boxplot(width = 0.25) + 
+  labs(title = "Residual Value Histogram",
+       y = "", 
+       x = "")
+
+# didn't patch them together as plots didn't look good squeezed in any way
+p1
+p2
+p3
+```
+
+From the first two plots, it appears that the regression relationship between level of limited access to healthy foods and diabetes prevalence fits pretty well. The first plot makes it look linear as the line of best fit has no curve. In general, all category levels seem to have relatively similar variance when not considering outliers, which can be seen when looking at each group individually in plot 2. The regression residuals look pretty normal in the QQ plot as most points are along the normal QQ line. However, it appears to have a slight upward curve, which indicates a right skew. This is reinforced in the third plot, as the median is slightly shifted left and there is a slightly longer right tail. 
+
+### Prediction for Cuyahoga County, OH
+
+```{r}
+# get limited access to healthy foods category and diabetes value
+cuyahoga <- chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(limited_healthy_cat, diabetes_prevalence)
+
+# predict with model
+cuyahoga_prediction <- augment(a2_model, newdata = cuyahoga)
+fitted_diabetes <- cuyahoga_prediction$.fitted
+
+glue("Cuyahoga Actual: {cuyahoga$diabetes_prevalence}%
+Cuyahoga Predicted: {round(fitted_diabetes, 2)}%")
+```
+
+### Two Least Successfully Fit Counties
+
+```{r}
+# get predicted values for all counties
+plot(a2_model, which = c(1:2))
+
+# print counties in order of residual magnitude
+indices <- c(140, 34)
+for (index in indices) {
+  # original data
+  completes <- chr_2022 |> filter(complete.cases(chr_2022))
+  print(completes[index, ] |> select(county, state, limited_healthy_cat, diabetes_prevalence))
+  # residual value
+  print(a2_aug[index, ] |> select(limited_healthy_cat, diabetes_prevalence, .fitted, .resid))
+}
+```
+
+The county with the largest absolute value residual is Stewart County, GA (7.260) and the county with the second largest absolute value residual is Calhoun County, GA (7.218).
+
+## Conclusions and Limitations
+
+In the second analysis, we wanted to see if there were statistical differences in mean values of diabetes prevalence for each progressive level of limited access to healthy foods. After running an ANOVA test and then Tukey's honestly significant difference test, it was found that not all of the progressive groups had statistically different means. There were five pairs that were statistically significant, which were low-lowest, middle-lowest, highest-low, highest-middle, and highest-high. With that, the only progressive groups were lowest-low and high-highest. Something interesting to note is that each of the statistically significant pairs included either the lowest or highest limited access to healthy foods group. This may indicate that those were the only two that were very different than the other three (low, middle, high).
+
+From our analysis, it doesn't appear that there are very many limitations to our conclusions, 
+so our conclusions are likely pretty solid. One thing to note is that for the middle and high groups of limited access to healthy foods, there are a couple of relatively extreme outliers. Something that may be an issue is that there was a right skew in the residuals, telling that there are more negative residual values than positive ones. The distribution is still normal though with a couple of outliers, which is a good sign when running a linear model. Another limitation is with the method used to divide counties up into various limited access to healthy foods levels. To ensure that each level had enough counties, we used a method that simply made it so each level had the same amount of counties. Because of that, the ranges of each level is not the same and some are much larger than others, so the levels are more represenative and relative to this data's subset of US counties than the population as a whole.
+
+
+# Analysis 3
+
+## Variables
+
+We will be using median income and state as predictor variables and diabetes prevalence as the outcome variable. The median income variable measures the county's residents' median household income in thousands of dollars, the state variable explains what state the county is in, and the diabetes prevalence variable measures the diabetes prevalence percentage of residents in the county. From our tibble (chr_2022), the variables are listed as median_income (predictor), state (predictor), and diabetes_prevalence (outcome) across the states of Arizona, Georgia, Massachusetts, Ohio, and Washington, and each variable has 315 counties with complete data. The state variable is considered an interaction term, as the intercept and slope of the equation will be impacted by the county's state. For Cuyahoga County, Ohio, the values of the predictor and outcome variables are state = "OH", median_income = 55.128, and diabetes_prevalence = 11.1.
+
+```{r}
+# get state, median_income, and diabetes_prevalence
+a3_data <- chr_2022 |> 
+  select(state, median_income, diabetes_prevalence) |> 
+  filter(complete.cases(median_income, diabetes_prevalence))
+
+dim(a3_data)
+
+# get values for Cuyahoga County
+chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(state, median_income, diabetes_prevalence)
+```
+
+## Research Question
+
+Does a county's state help make their median income a better predictor (better than model 1) of the county's diabetes prevalence in 315 counties across the states of Arizona, Georgia, Massachusetts, Ohio, and Washington?
+
+## Data Visualization
+
+```{r, message = FALSE}
+ggplot(a3_data, aes(x = median_income, y = diabetes_prevalence)) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  facet_grid(state ~ ., labeller = "label_both") +
+  guides(fill = "none") + 
+  labs(title = "Relationship Between Median Income and Diabetes Prevalence by State",
+       x = "Median Income of County in Thousands of Dollars",
+       y = "Diabetes Prevalence Percentage of County")
+```
+From this plot, it appears that each individual state's relationship between median income and diabetes prevalence is negative. The  slope's negative degree varies by state, along with the amount of data points. Georgia and Ohio have the most amount of counties, which means that they have many more data points than states like Arizona and Massachusetts. With that, Georgia and Ohio also have a larger range of values for both median income and diabetes prevalence. It can also be seen that Massachusetts has a higher range of median income while Arizona is on the lower range. 
+
+## Fitted Model
+
+```{r, message = FALSE}
+# make Ohio baseline
+a3_data <- a3_data |> mutate(state = fct_relevel(state, "OH"))
+
+# create model
+a3_model <- lm(diabetes_prevalence ~ median_income * state, data = a3_data)
+
+# R^2, number of observations
+glance(a3_model) |> select(r.squared, sigma, nobs)
+```
+
+### Prediction Equation
+```{r}
+extract_eq(a3_model, use_coefs = TRUE, operator_location = "start",
+           wrap = TRUE, coef_digits = 2,  terms_per_line = 1)
+```
+
+The prediction equation from the model is diabetes_prevalence = 14.58 - 0.06(median_income) + 3.68(state$_{AZ}$) + 4.45(state$_{GA}$) - 4.73(state$_{MA}$) - 1.69(state$_{WA}$) - 0.06(median_income * state$_{AZ}$) - 0.05(median_income * state$_{GA}$) + 0.04(median_income * state$_{MA}$) + 0.01(median_income * state$_{WA}$). Because there is an interaction term, the slope used to get the fitted diabetes prevalence value is dependent on both the county's state and median income. This means the fitted diabetes prevalence of a county in Ohio is 14.58 - 0.06(median income). There isn't an interaction term (median income * state) because Ohio has been set as the baseline state for the model. For Arizona, the predicted prevalence is 14.58 - 0.06(median_income) + 3.68(state$_{AZ}$). For Georgia, the predicted prevalence is 14.58 - 0.06(median_income) + 4.45(state$_{GA}$). For Massachusetts, the predicted prevalence is 14.58 - 0.06(median_income) + 4.73(state$_{MA}$). For Washington, the predicted prevalence is 14.58 - 0.06(median_income) + 0.01(median_income * state$_{WA}$).
+
+### Model Coefficients
+
+```{r}
+tidy(a3_model, conf.int = TRUE, conf.level = 0.90) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2)
+```
+
+### Summaries of Model Fit
+
+ $R^2$   Residual Standard Error   Number of Fitted Observations
+------- ------------------------- -------------------------------
+ 0.740           1.21                          315
+
+
+## Residual Analysis
+
+### Residual Plots
+
+```{r, message = FALSE}
+a3_aug <- augment(a3_model, newdata = a3_data)
+
+p1 <- ggplot(a3_aug, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) +
+  labs(title = "Residuals vs. Fitted Values", 
+       x = "Fitted diabetes_prevalence Values", y = "Residuals")
+
+p2 <- ggplot(a3_aug, aes(sample = .resid)) +
+  geom_qq(col = "black") + 
+  geom_qq_line(col = "red") + 
+  labs(title = "Normal Q-Q: Model Residuals")
+
+p1 / p2
+```
+
+Overall, it looks like the predicted diabetes prevalence values for outlier counties have actually become more extreme and farther away from the actual values relative to analysis 1. Although the loess smooth curve looks less extreme than in analysis 1, it actually is the same if not more curved and it just appears less because the y-axis range is larger. For the majority of counties though, it appears that the analysis 3 model fits much better. This is evident through the first plot, where you can see a lot more of the points are closer to the line of best fit, which means that the fitted values are very close to the actual ones. It can also be seen in the QQ plot, where lots of the points in the middle are pretty much on the normal QQ line. While it looks like overall, the model has become more accurate by accounting for the county's state, the residual variance appears to have increased. This can be seen in the first plot as the variance increases as the fitted value increases. Similarly in the second plot, the outliers on the tails are farther away from the QQ line which means that the outlier residual values are larger.
+
+### Cuyahoga County Comparison
+
+```{r}
+# get income and diabetes values
+cuyahoga <- chr_2022 |> filter(state == "OH") |>
+  filter(county == "Cuyahoga County") |>
+  select(state, median_income, diabetes_prevalence)
+
+# predict with model
+cuyahoga_prediction <- augment(a3_model, newdata = cuyahoga)
+fitted_diabetes <- cuyahoga_prediction$.fitted
+
+glue("Cuyahoga Actual: {cuyahoga$diabetes_prevalence}%
+Cuyahoga Predicted: {round(fitted_diabetes, 2)}%")
+```
+
+### Largest Residual Counties
+
+```{r}
+# get predicted values for all counties
+plot(a3_model, which = c(1:2))
+
+# print counties in order of residual magnitude
+indices <- c(277, 143)
+for (index in indices) {
+  # original data
+  print(chr_2022[index, ] |> select(county, state, median_income, diabetes_prevalence))
+  # residual value
+  print(a3_aug[index, ] |> select(median_income, diabetes_prevalence, .fitted, .resid))
+}
+```
+
+The county with the largest absolute value residual is Adams County, WA (4.71) and the county with the second largest absolute value residual is Stewart County, GA (4.21).
+
+## Conclusions and Limitations
+
+In analysis 3, we wanted to investigate if a county's state interacting with their median income helped become a better predictor of their diabetes prevalence. Based on our first analysis model using only median income to predict diabetes prevalence, the $R^2$ value was 0.585 and residual standard error was 0.128. In this model with also including the county's state, the $R^2$ value is 0.740 and residual standard error is 1.210. $R^2$ represents the proportion of the diabetes prevalence variance explained by regression model variables. With that, a higher value is better, as it means the relationship in the model between predictor and outcome variables is stronger. Given that the $R^2$ value of this model is 0.155 higher and the residual standard error is 0.007 lower, we can determine that adding state as an interaction term with median income helps to predict a county's diabetes prevalence more accurately. To further this idea, we will take a random sample of 50 indices of the data and see which model (1 or 3) performed better in terms of absolute residual value.
+
+```{r}
+# set seed for reproducable results
+set.seed(12345)
+
+# create empty results table
+results <- data.frame(matrix(ncol = 4, nrow = 0))
+colnames(results) <- c('Actual', 'M1 Fitted', 'M3 Fitted', 'Better Fitted')
+
+# create random index values
+indices <- sample(1:315, 50, replace = FALSE)
+
+# get absolute residual values for the indices
+for (index in indices) {
+  actual_value <- chr_2022[index, ]$diabetes_prevalence
+  model1_resid <- abs(exp(a1_aug[index, ]$.resid))          # untransform residual
+  model3_resid <- abs(a3_aug[index, ]$.resid)
+  
+  which_better <- 1
+  if (model1_resid > model3_resid) {
+    which_better <- 3
+  }
+  
+  new_row <- c(actual_value, model1_resid, model3_resid, which_better)
+  results[nrow(results) + 1,] <- new_row
+}
+
+head(results, 10)
+
+# see breakdown of which model predicted a closer diabetes prevalence value
+tabyl(results$`Better Fitted`)
+```
+
+From this, we can see that 70% of the random 50 data indices were predicted better by model 3 than by model 1. This helps demonstrate how  a county's state along with their median income helps predict the diabetes prevalence better than just with the median income.
+
+This model appears to work best in terms of various numbers, such as $R^2$ value and residuals and doesn't appear to have many limitations at all. One limitation that may make predictions a bit less accurate is the distribution of number of counties in each state. Some of the states, like Arizona and Massachusetts have very few counties (15 and 14 respectively), particularly when compared with states like Georgia, who has 155 counties. Since we have added state as another predictor variable and it interacts with median income, the states'number of counties become relavant as they make more coefficients in the model. With that, states with more counties will have more accurate coefficients because there's more data to train the model on, so the predicted values for those states will likely be more accurate than states with less counties (excluding outliers). Another thing to look at would be the normality of residuals, as it appears that this model isn't as resilient to outlier counties. This is evident through each of the residual plots, as in the first one, there's more variation as diabetes prevalence values increase and in the second one, the tails are farther away from the QQ line. A final limitation would be that by looking at US diabetes prevalence by state, Georgia and Massachusetts appear to be extreme states. Relative to the US median (9.8), Georgia has a diabetes prevalence noticeably higher (11.7) while Massachusetts is noticeably lower (7.7). The other states are all relatively close to the median value. With this, Georgia and Massachusetts may not be the best states to include in the data as it doesn't help predict all US counties' diabetes prevalence as well because they are outlier states. 
+
+
+# Session Information
+
+The session information.
+
+```{r}
+sessionInfo()
+```
+
+
