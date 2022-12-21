@@ -1,0 +1,219 @@
+---
+title: "Max Tjen: Lab 06 for 431"
+author: "Max Tjen"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    theme: paper
+    highlight: textmate
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(comment=NA)
+options(width = 70)
+```
+
+## Setup
+
+```{r load_packages, message = FALSE, warning = FALSE}
+
+library(tidyverse)
+library(naniar)
+library(dplyr)
+library(janitor)
+library(broom)
+library(patchwork)
+library(kableExtra)
+
+theme_set(theme_bw())
+```
+
+```{r, message = FALSE}
+lindler <- read_rds("/Users/mtjen/desktop/431/labs/lab05/lab05_lind.Rds")
+
+# select only those patients who were alive at 6 months, add unique id, 
+lindler_alive <- lindler |>
+  filter(sixMonthSurvive == 1) |>
+  mutate(id = row_number())
+
+# set seed for reproduction
+set.seed(431)
+
+# take train sample
+lindner_alive_train <- slice_sample(lindler_alive, prop = 0.7)
+# get the rest of the samples
+lindner_alive_test <- anti_join(lindler_alive, lindner_alive_train)
+
+# check dimensions
+dim(lindner_alive_train)
+dim(lindner_alive_test)
+```
+
+# Question 1
+
+```{r, message = FALSE}
+# see which transformation is more appropriate on outcome
+p1 <- ggplot(data = lindner_alive_train, aes(sample = sqrt(cardbill))) +
+  geom_qq() + 
+  geom_qq_line(col = "red") +
+  labs(title = "Square Root", x = "", y = "")
+
+p2 <- ggplot(data = lindner_alive_train, aes(sample = log(cardbill))) +
+  geom_qq() + 
+  geom_qq_line(col = "red") +
+  labs(title = "Log", x = "", y = "")
+
+p1 / p2
+
+# linear regression model
+model1 <- lm(log(cardbill) ~ ejecfrac, data = lindner_alive_train)
+
+# visualize linear regression
+ggplot(lindner_alive_train, aes(x = ejecfrac, y = log(cardbill))) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Ejection Fraction and 6-month Cardiac-Related
+       Costs of Patients who were Alive at 6 Months",
+       x = "Ejection Fraction",
+       y = "log(6-month Cardiac-Related Costs)")
+
+tidy(model1, conf.int = TRUE) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2) |>
+  kable_minimal(font_size = 28)
+```
+
+Using QQ plots to look at a possible square root or log transformation, it appears that a log transformation is slightly better. This is because points seem to follow the QQ line better, meaning that the data is more normal, and there looks to be less skew (upward curve) relative to the square root transformation. A simple linear regression visualization shows that the log of 6 month cardiac-related costs doesn't seem to fit the line of best fit very well. There's a lot of variation around the line along with some very clear outliers. The line of best fit is similar to the loess smooth curve though, with both having a slight negative trend as ejection fraction increases.
+
+# Question 2
+
+```{r, message = FALSE}
+# linear regression model
+model2 <- lm(log(cardbill) ~ ejecfrac + abcix, data = lindner_alive_train)
+
+# visualize linear regression
+ggplot(lindner_alive_train, aes(x = ejecfrac + abcix, y = log(cardbill))) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Ejection Fraction with abciximab Augmentation 
+       and 6-month Cardiac-Related Costs of Patients who were Alive at 6 Months",
+       x = "Ejection Fraction + abciximab Augmentation",
+       y = "log(6-month Cardiac-Related Costs)")
+
+tidy(model2, conf.int = TRUE) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2) |>
+  kable_minimal(font_size = 28)
+```
+
+The relationship between the main predictor and outcome doesn't appear to have changed very much, if at all, by just adding abcix (whether or not the patient had the abciximab augmentation). This new linear regression model looks nearly identical graphically relative to model 1, and you can see through the model coefficents that the intercept and ejecfrac coefficient has changed slightly with the addition of abcix. Furthermore, since the abcix coefficient is relatively small, the log(cardbill) value doesn't fluctuate by much if a patient did or didn't have an abciximab augmentation.
+
+# Question 3 
+
+```{r, message = FALSE}
+# linear regression model
+model3 <- lm(log(cardbill) ~ ejecfrac + abcix + stent + height + female + diabetic + 
+               acutemi + ves1proc, data = lindner_alive_train)
+
+car::vif(model3)
+
+# visualize linear regression
+ggplot(lindner_alive_train, aes(x = ejecfrac + abcix + stent + height+ female + diabetic + 
+               acutemi + ves1proc, y = log(cardbill))) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Ejection Fraction and other variables 
+       and 6-month Cardiac-Related Costs of Patients who were Alive at 6 Months",
+       x = "ejecfrac + abcix + stent + height+ female + diabetic + 
+               acutemi + ves1proc",
+       y = "log(6-month Cardiac-Related Costs)")
+
+tidy(model3, conf.int = TRUE) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2) |>
+  kable_minimal(font_size = 28)
+```
+
+After adding multiple variables, there doesn't appear to be any collinearity between any of them. This can be seen by using the vif() function, where none of the predictor variables' values are above 2, thus none of them have correlation issues. With all of these predictors included, the model looks like it may be the best so far, as a lot of the points are a lot closer to the line of best fit. Of the new variables added, most don't appear to influence the log(cardbill) prediction very much except for acutemi and ves1proc. 
+
+# Question 4
+
+```{r, message = FALSE}
+# linear regression model
+model4 <- lm(log(cardbill) ~ ejecfrac + abcix + stent + diabetic + 
+               acutemi + ves1proc + height * female, data = lindner_alive_train)
+
+# visualize linear regression
+ggplot(lindner_alive_train, aes(x = ejecfrac + abcix + stent + diabetic + 
+               acutemi + ves1proc + height * female, y = log(cardbill))) +
+  geom_point(col = "black") + 
+  geom_smooth(method = "lm", col = "red", se = FALSE) + 
+  geom_smooth(method = "loess", col = "blue", se = FALSE) + 
+  labs(title = "Relationship Between Ejection Fraction and other variables 
+       and 6-month Cardiac-Related Costs of Patients who were Alive at 6 Months",
+       x = "ejecfrac + abcix + stent + height+ female + diabetic + 
+               acutemi + ves1proc + height * female",
+       y = "log(6-month Cardiac-Related Costs)")
+
+tidy(model4, conf.int = TRUE) |> 
+  select(term, estimate, conf.low, conf.high) |>
+  kbl(digits = 2) |>
+  kable_minimal(font_size = 28)
+```
+
+By adding the interaction term between the height and female variables, it doesn't look like it impacts cardbill very much. The predicted log(cardbill) graph points appear to have similar scale and variance, signifying that the predicted cardbill doesn't change very much by adding the interaction term. This can be quantified by the very small coefficient, marking that the interaction term barely changed the predicted log(cardbill). One thing that the interaction term does make more clear is the split between gender, as the points are effectively split into two groups with one for each gender value. 
+
+# Question 5
+
+```{r}
+model1_test <- augment(model1, newdata = lindner_alive_test) |>
+  mutate(name = "model1", fitted = exp(.fitted), residual = cardbill - fitted)
+
+model2_test <- augment(model2, newdata = lindner_alive_test) |>
+  mutate(name = "model2", fitted = exp(.fitted), residual = cardbill - fitted)
+
+model3_test <- augment(model3, newdata = lindner_alive_test) |>
+  mutate(name = "model3", fitted = exp(.fitted), residual = cardbill - fitted)
+
+model4_test <- augment(model4, newdata = lindner_alive_test) |>
+  mutate(name = "model4", fitted = exp(.fitted), residual = cardbill - fitted)
+
+# get R^2, AIC, and BIC
+bind_rows(glance(model1), glance(model2), glance(model3), glance(model4)) |>
+  mutate(model_vars = c("Model 1", "Model 2", "Model 3", "Model 4")) |>
+  select(model_vars, r.squared, AIC, BIC) |>
+  kable(digits = c(0, 4, 4, 4)) |>
+  kable_minimal(font_size = 28)
+
+# get MAPE, RMPSE, and max_error
+comparison <- bind_rows(model1_test, model2_test, model3_test, model4_test)
+
+comparison |>
+  group_by(name) |>
+  summarize(n = n(),
+            MAPE = mean(abs(residual)), 
+            RMSPE = sqrt(mean(residual^2)),
+            max_error = max(abs(residual))) |>
+  kbl(digits = c(0, 0, 4, 3, 2)) |>
+  kable_classic(font_size = 28)
+```
+
+After fitting the models to the test data, we can look at a couple of measures to try and determine which of the models performed the best. Model 1 performed best in terms of having the lowest max_error, model 2 performed best in terms of BIC score, model 3 performed best in terms of AIC score, MAPE, and RMSPE, and model 4 performed best in terms of $R^2$. Overall, all of the models performed relatively similar after fitting each to the test data. I think model 3 performed the best overall though, as it was pretty much the best across the board both pre-fit and post-fit.
+
+# Question 6
+
+In this assignment, we primarily focused on developing models and then using various metrics to evaluate their fit on the data. With these, we can better determine which model to select based on circumstances to use on the test data. In theory, a better fitting model will perform better on the test data and return more accurate results and predictions. We would then be able to get more accurate test statistics and p-values, potentially giving more statistical validity to our conclusions from the model. With the p-values, the model can be compared to the p-value threshold that an investigator has been given to try and see if the null hypothesis can be rejected. A more precise p-value measurement may mean a lot when trying to declare significance with a very small p-value threshold such as 0.01 or 0.001. As such, every little detail matters and choosing the best model according to certain criteria is the first step to seeing whether or not a statistical test and model has statistical significance.
+
+
+# Session Information
+```{r}
+sessionInfo()
+```
